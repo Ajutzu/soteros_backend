@@ -4,6 +4,7 @@ const pool = require('../config/conn');
 const bcrypt = require('bcryptjs');
 const { sendStaffAccountCreationEmail } = require('../services/emailService');
 const { authenticateAdmin, authenticateStaff, authenticateAny } = require('../middleware/authMiddleware');
+const { uploadProfile } = require('../config/cloudinary');
 
 // GET - Get all staff members (admin and staff can access, but staff only see active members)
 router.get('/', authenticateAny, async (req, res) => {
@@ -139,7 +140,7 @@ router.get('/:id', authenticateAny, async (req, res) => {
     
     const [staff] = await pool.execute(
       `SELECT s.id, s.name, s.email, s.phone, s.position, s.department, s.status, s.availability,
-              s.last_login, s.created_at, s.updated_at, t.id as team_id, t.name as team_name
+              s.last_login, s.created_at, s.updated_at, s.profile_picture, t.id as team_id, t.name as team_name
        FROM staff s
        LEFT JOIN teams t ON s.assigned_team_id = t.id
        WHERE s.id = ?`,
@@ -628,6 +629,211 @@ router.get('/stats/overview', authenticateAdmin, async (req, res) => {
       success: false,
       message: 'Failed to fetch staff statistics',
       error: error.message
+    });
+  }
+});
+
+// POST - Upload staff profile picture (Using Cloudinary)
+// Allow staff to upload their own picture, or admin to upload for any staff
+router.post('/:id/upload-picture', authenticateAny, uploadProfile.single('profilePicture'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const staffId = parseInt(id);
+
+    console.log('📤 Staff profile picture upload request received');
+    console.log('Staff ID:', staffId);
+    console.log('File received:', req.file ? 'Yes' : 'No');
+
+    // Authorization check: Staff can only upload their own picture, admin can upload for any staff
+    const isAdmin = req.userType === 'admin';
+    const isStaff = req.userType === 'staff';
+    const isUpdatingSelf = isStaff && parseInt(req.user.id) === parseInt(id);
+
+    if (!isAdmin && !isUpdatingSelf) {
+      return res.status(403).json({
+        success: false,
+        message: 'You can only upload your own profile picture'
+      });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'No file uploaded'
+      });
+    }
+
+    console.log('✅ Cloudinary upload successful:', {
+      url: req.file.path,
+      filename: req.file.filename
+    });
+
+    // Get current profile picture
+    const [currentStaff] = await pool.execute(
+      'SELECT profile_picture FROM staff WHERE id = ?',
+      [staffId]
+    );
+
+    if (currentStaff.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Staff member not found'
+      });
+    }
+
+    // Note: Old Cloudinary images can be cleaned up via Cloudinary dashboard or API
+    // For now, we just replace the URL in the database
+    if (currentStaff[0].profile_picture) {
+      console.log('Replacing old profile picture URL:', currentStaff[0].profile_picture);
+    }
+
+    // Store the full Cloudinary URL
+    const cloudinaryUrl = req.file.path;
+
+    // Update staff profile with new Cloudinary URL
+    await pool.execute(
+      'UPDATE staff SET profile_picture = ?, updated_at = NOW() WHERE id = ?',
+      [cloudinaryUrl, staffId]
+    );
+
+    console.log('✅ Profile picture updated for staff ID:', staffId);
+
+    // Log profile picture update
+    try {
+      const clientIP = req.headers['x-forwarded-for'] || req.connection.remoteAddress || req.ip || 'unknown';
+      if (isAdmin) {
+        await pool.execute(`
+          INSERT INTO activity_logs (admin_id, action, details, ip_address, created_at)
+          VALUES (?, 'staff_profile_picture_update', ?, ?, NOW())
+        `, [req.user.id || req.user.admin_id, `Staff profile picture uploaded to Cloudinary for staff ID: ${staffId}`, clientIP]);
+      } else {
+        await pool.execute(`
+          INSERT INTO activity_logs (staff_id, action, details, ip_address, created_at)
+          VALUES (?, 'staff_profile_picture_update', ?, ?, NOW())
+        `, [staffId, `Staff profile picture uploaded to Cloudinary`, clientIP]);
+      }
+      console.log('✅ Activity logged: staff_profile_picture_update');
+    } catch (logError) {
+      console.error('❌ Failed to log profile picture update activity:', logError.message);
+    }
+
+    // Get updated staff data
+    const [updatedStaff] = await pool.execute(
+      `SELECT s.id, s.name, s.email, s.phone, s.position, s.department, s.status, s.availability,
+              s.last_login, s.created_at, s.updated_at, s.profile_picture, t.id as team_id, t.name as team_name
+       FROM staff s
+       LEFT JOIN teams t ON s.assigned_team_id = t.id
+       WHERE s.id = ?`,
+      [staffId]
+    );
+
+    res.json({
+      success: true,
+      message: 'Profile picture updated successfully',
+      staff: updatedStaff[0],
+      profilePicture: cloudinaryUrl
+    });
+
+  } catch (error) {
+    console.error('❌ Error uploading staff profile picture:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to upload profile picture. Please try again.'
+    });
+  }
+});
+
+// DELETE - Delete staff profile picture
+// Allow staff to delete their own picture, or admin to delete for any staff
+router.delete('/:id/delete-picture', authenticateAny, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const staffId = parseInt(id);
+
+    // Authorization check: Staff can only delete their own picture, admin can delete for any staff
+    const isAdmin = req.userType === 'admin';
+    const isStaff = req.userType === 'staff';
+    const isUpdatingSelf = isStaff && parseInt(req.user.id) === parseInt(id);
+
+    if (!isAdmin && !isUpdatingSelf) {
+      return res.status(403).json({
+        success: false,
+        message: 'You can only delete your own profile picture'
+      });
+    }
+
+    // Get current profile picture
+    const [currentStaff] = await pool.execute(
+      'SELECT profile_picture FROM staff WHERE id = ?',
+      [staffId]
+    );
+
+    if (currentStaff.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Staff member not found'
+      });
+    }
+
+    if (!currentStaff[0].profile_picture) {
+      return res.status(400).json({
+        success: false,
+        message: 'No profile picture to delete'
+      });
+    }
+
+    // Note: Old Cloudinary images can be cleaned up via Cloudinary dashboard or API
+    // For now, we just remove the URL from the database
+    console.log('Removing profile picture URL:', currentStaff[0].profile_picture);
+
+    // Update staff profile to remove profile picture
+    await pool.execute(
+      'UPDATE staff SET profile_picture = NULL, updated_at = NOW() WHERE id = ?',
+      [staffId]
+    );
+
+    console.log('✅ Profile picture deleted for staff ID:', staffId);
+
+    // Log profile picture deletion
+    try {
+      const clientIP = req.headers['x-forwarded-for'] || req.connection.remoteAddress || req.ip || 'unknown';
+      if (isAdmin) {
+        await pool.execute(`
+          INSERT INTO activity_logs (admin_id, action, details, ip_address, created_at)
+          VALUES (?, 'staff_profile_picture_delete', ?, ?, NOW())
+        `, [req.user.id || req.user.admin_id, `Staff profile picture deleted for staff ID: ${staffId}`, clientIP]);
+      } else {
+        await pool.execute(`
+          INSERT INTO activity_logs (staff_id, action, details, ip_address, created_at)
+          VALUES (?, 'staff_profile_picture_delete', ?, ?, NOW())
+        `, [staffId, `Staff profile picture deleted`, clientIP]);
+      }
+      console.log('✅ Activity logged: staff_profile_picture_delete');
+    } catch (logError) {
+      console.error('❌ Failed to log profile picture deletion activity:', logError.message);
+    }
+
+    // Get updated staff data
+    const [updatedStaff] = await pool.execute(
+      `SELECT s.id, s.name, s.email, s.phone, s.position, s.department, s.status, s.availability,
+              s.last_login, s.created_at, s.updated_at, s.profile_picture, t.id as team_id, t.name as team_name
+       FROM staff s
+       LEFT JOIN teams t ON s.assigned_team_id = t.id
+       WHERE s.id = ?`,
+      [staffId]
+    );
+
+    res.json({
+      success: true,
+      message: 'Profile picture deleted successfully',
+      staff: updatedStaff[0]
+    });
+
+  } catch (error) {
+    console.error('❌ Error deleting staff profile picture:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete profile picture. Please try again.'
     });
   }
 });

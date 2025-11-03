@@ -3,6 +3,7 @@ const router = express.Router();
 const pool = require('../config/conn');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { uploadProfile } = require('../config/cloudinary');
 
 // POST - Admin registration
 router.post('/register', async (req, res) => {
@@ -241,7 +242,7 @@ router.get('/profile', authenticateAdmin, async (req, res) => {
     const adminId = req.admin.id;
 
     const [admins] = await pool.execute(
-      'SELECT admin_id, name, email, role, status, created_at FROM admin WHERE admin_id = ?',
+      'SELECT admin_id, name, email, role, status, profile_picture, created_at FROM admin WHERE admin_id = ?',
       [adminId]
     );
 
@@ -301,7 +302,7 @@ router.put('/profile', authenticateAdmin, async (req, res) => {
 
     // Get updated admin data
     const [updatedAdmins] = await pool.execute(
-      'SELECT admin_id, name, email, role, status, created_at FROM admin WHERE admin_id = ?',
+      'SELECT admin_id, name, email, role, status, profile_picture, created_at FROM admin WHERE admin_id = ?',
       [adminId]
     );
 
@@ -448,6 +449,165 @@ router.post('/change-password', authenticateAdmin, async (req, res) => {
       success: false,
       message: 'Failed to change password',
       error: error.message
+    });
+  }
+});
+
+// POST - Upload admin profile picture (Using Cloudinary)
+router.post('/upload-picture', authenticateAdmin, uploadProfile.single('profilePicture'), async (req, res) => {
+  try {
+    const adminId = req.admin.id;
+
+    console.log('📤 Admin profile picture upload request received');
+    console.log('Admin ID from token:', adminId);
+    console.log('File received:', req.file ? 'Yes' : 'No');
+
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'No file uploaded'
+      });
+    }
+
+    console.log('✅ Cloudinary upload successful:', {
+      url: req.file.path,
+      filename: req.file.filename
+    });
+
+    // Get current profile picture
+    const [currentAdmins] = await pool.execute(
+      'SELECT profile_picture FROM admin WHERE admin_id = ?',
+      [adminId]
+    );
+
+    if (currentAdmins.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Admin not found'
+      });
+    }
+
+    const currentAdmin = currentAdmins[0];
+
+    // Note: Old Cloudinary images can be cleaned up via Cloudinary dashboard or API
+    // For now, we just replace the URL in the database
+    if (currentAdmin.profile_picture) {
+      console.log('Replacing old profile picture URL:', currentAdmin.profile_picture);
+    }
+
+    // Store the full Cloudinary URL
+    const cloudinaryUrl = req.file.path;
+
+    // Update admin profile with new Cloudinary URL
+    await pool.execute(
+      'UPDATE admin SET profile_picture = ?, updated_at = NOW() WHERE admin_id = ?',
+      [cloudinaryUrl, adminId]
+    );
+
+    console.log('✅ Profile picture updated for admin ID:', adminId);
+
+    // Log profile picture update
+    try {
+      const clientIP = req.headers['x-forwarded-for'] || req.connection.remoteAddress || req.ip || 'unknown';
+      await pool.execute(`
+        INSERT INTO activity_logs (admin_id, action, details, ip_address, created_at)
+        VALUES (?, 'admin_profile_picture_update', ?, ?, NOW())
+      `, [adminId, `Admin profile picture uploaded to Cloudinary`, clientIP]);
+      console.log('✅ Activity logged: admin_profile_picture_update');
+    } catch (logError) {
+      console.error('❌ Failed to log profile picture update activity:', logError.message);
+    }
+
+    // Get updated admin data
+    const [updatedAdmins] = await pool.execute(
+      'SELECT admin_id, name, email, role, status, profile_picture, created_at FROM admin WHERE admin_id = ?',
+      [adminId]
+    );
+
+    res.json({
+      success: true,
+      message: 'Profile picture updated successfully',
+      admin: updatedAdmins[0],
+      profilePicture: cloudinaryUrl
+    });
+
+  } catch (error) {
+    console.error('❌ Error uploading admin profile picture:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to upload profile picture. Please try again.'
+    });
+  }
+});
+
+// DELETE - Delete admin profile picture
+router.delete('/delete-picture', authenticateAdmin, async (req, res) => {
+  try {
+    const adminId = req.admin.id;
+
+    // Get current profile picture
+    const [currentAdmins] = await pool.execute(
+      'SELECT profile_picture FROM admin WHERE admin_id = ?',
+      [adminId]
+    );
+
+    if (currentAdmins.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Admin not found'
+      });
+    }
+
+    const currentAdmin = currentAdmins[0];
+
+    if (!currentAdmin.profile_picture) {
+      return res.status(400).json({
+        success: false,
+        message: 'No profile picture to delete'
+      });
+    }
+
+    // Note: Old Cloudinary images can be cleaned up via Cloudinary dashboard or API
+    // For now, we just remove the URL from the database
+    console.log('Removing profile picture URL:', currentAdmin.profile_picture);
+
+    // Update admin profile to remove profile picture
+    await pool.execute(
+      'UPDATE admin SET profile_picture = NULL, updated_at = NOW() WHERE admin_id = ?',
+      [adminId]
+    );
+
+    console.log('✅ Profile picture deleted for admin ID:', adminId);
+
+    // Log profile picture deletion
+    try {
+      const clientIP = req.headers['x-forwarded-for'] || req.connection.remoteAddress || req.ip || 'unknown';
+      await pool.execute(`
+        INSERT INTO activity_logs (admin_id, action, details, ip_address, created_at)
+        VALUES (?, 'admin_profile_picture_delete', ?, ?, NOW())
+      `, [adminId, `Admin profile picture deleted`, clientIP]);
+      console.log('✅ Activity logged: admin_profile_picture_delete');
+    } catch (logError) {
+      console.error('❌ Failed to log profile picture deletion activity:', logError.message);
+    }
+
+    // Get updated admin data
+    const [updatedAdmins] = await pool.execute(
+      'SELECT admin_id, name, email, role, status, profile_picture, created_at FROM admin WHERE admin_id = ?',
+      [adminId]
+    );
+
+    res.json({
+      success: true,
+      message: 'Profile picture deleted successfully',
+      admin: updatedAdmins[0]
+    });
+
+  } catch (error) {
+    console.error('❌ Error deleting admin profile picture:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete profile picture. Please try again.'
     });
   }
 });
