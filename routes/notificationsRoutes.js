@@ -11,6 +11,7 @@ router.get('/', authenticateAny, async (req, res) => {
     const limit = parseInt(req.query.limit) || 20;
     const offset = (page - 1) * limit;
     const userId = req.user.user_id || req.user.id;
+    const dateFilter = req.query.date; // Optional date parameter (YYYY-MM-DD format)
 
     // Try to get notifications, if table doesn't exist, return empty
     try {
@@ -19,28 +20,94 @@ router.get('/', authenticateAny, async (req, res) => {
         "SELECT 1 FROM notifications LIMIT 1"
       );
       
+      // Get user's account creation date from general_users table
+      let userCreatedAt = null;
+      try {
+        const [userResult] = await db.execute(
+          'SELECT created_at FROM general_users WHERE user_id = ?',
+          [userId]
+        );
+        
+        if (userResult.length > 0) {
+          userCreatedAt = userResult[0].created_at;
+        }
+      } catch (userError) {
+        console.error('Error fetching user created_at:', userError);
+        // Continue without user date filter if table doesn't exist
+      }
+      
+      // Build WHERE clause with user creation date filter and optional date filter
+      let whereClause = '(n.user_id = ? OR n.user_id IS NULL)';
+      const queryParams = [userId];
+      
+      // Filter notifications to only show those created on or after user's account creation date
+      if (userCreatedAt) {
+        whereClause += ' AND n.created_at >= ?';
+        queryParams.push(userCreatedAt);
+      }
+      
+      if (dateFilter) {
+        // Validate date format (YYYY-MM-DD)
+        const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+        if (dateRegex.test(dateFilter)) {
+          whereClause += ' AND DATE(n.created_at) = ?';
+          queryParams.push(dateFilter);
+        } else {
+          return res.status(400).json({
+            success: false,
+            message: 'Invalid date format. Please use YYYY-MM-DD format.'
+          });
+        }
+      }
+      
       // Get notifications for the user
       const [notifications] = await db.execute(
         `SELECT n.*, n.title, n.message,
          DATE_FORMAT(n.created_at, '%Y-%m-%d %H:%i:%s') as created_at,
          DATE_FORMAT(n.updated_at, '%Y-%m-%d %H:%i:%s') as updated_at
          FROM notifications n
-         WHERE (n.user_id = ? OR n.user_id IS NULL)
+         WHERE ${whereClause}
          ORDER BY n.created_at DESC
          LIMIT ? OFFSET ?`,
-        [userId, limit, offset]
+        [...queryParams, limit, offset]
       );
 
       // Get total count
+      let countWhereClause = '(user_id = ? OR user_id IS NULL)';
+      const countParams = [userId];
+      
+      if (userCreatedAt) {
+        countWhereClause += ' AND created_at >= ?';
+        countParams.push(userCreatedAt);
+      }
+      
+      if (dateFilter && /^\d{4}-\d{2}-\d{2}$/.test(dateFilter)) {
+        countWhereClause += ' AND DATE(created_at) = ?';
+        countParams.push(dateFilter);
+      }
+      
       const [countResult] = await db.execute(
-        'SELECT COUNT(*) as total FROM notifications WHERE (user_id = ? OR user_id IS NULL)',
-        [userId]
+        `SELECT COUNT(*) as total FROM notifications WHERE ${countWhereClause}`,
+        countParams
       );
 
       // Get unread count
+      let unreadWhereClause = '(user_id = ? OR user_id IS NULL) AND is_read = 0';
+      const unreadParams = [userId];
+      
+      if (userCreatedAt) {
+        unreadWhereClause += ' AND created_at >= ?';
+        unreadParams.push(userCreatedAt);
+      }
+      
+      if (dateFilter && /^\d{4}-\d{2}-\d{2}$/.test(dateFilter)) {
+        unreadWhereClause += ' AND DATE(created_at) = ?';
+        unreadParams.push(dateFilter);
+      }
+      
       const [unreadResult] = await db.execute(
-        'SELECT COUNT(*) as unread FROM notifications WHERE (user_id = ? OR user_id IS NULL) AND is_read = 0',
-        [userId]
+        `SELECT COUNT(*) as unread FROM notifications WHERE ${unreadWhereClause}`,
+        unreadParams
       );
 
       res.json({
@@ -48,6 +115,7 @@ router.get('/', authenticateAny, async (req, res) => {
         notifications,
         total: countResult[0].total,
         unreadCount: unreadResult[0].unread,
+        dateFilter: dateFilter || null,
         pagination: {
           currentPage: page,
           totalPages: Math.ceil(countResult[0].total / limit),
