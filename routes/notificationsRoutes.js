@@ -19,28 +19,27 @@ router.get('/', authenticateAny, async (req, res) => {
         "SELECT 1 FROM notifications LIMIT 1"
       );
       
-      // Get notifications for the user (only from today)
+      // Get notifications for the user
       const [notifications] = await db.execute(
         `SELECT n.*, n.title, n.message,
          DATE_FORMAT(n.created_at, '%Y-%m-%d %H:%i:%s') as created_at,
          DATE_FORMAT(n.updated_at, '%Y-%m-%d %H:%i:%s') as updated_at
          FROM notifications n
          WHERE (n.user_id = ? OR n.user_id IS NULL)
-         AND DATE(n.created_at) = CURDATE()
          ORDER BY n.created_at DESC
          LIMIT ? OFFSET ?`,
         [userId, limit, offset]
       );
 
-      // Get total count (only from today)
+      // Get total count
       const [countResult] = await db.execute(
-        'SELECT COUNT(*) as total FROM notifications WHERE (user_id = ? OR user_id IS NULL) AND DATE(created_at) = CURDATE()',
+        'SELECT COUNT(*) as total FROM notifications WHERE (user_id = ? OR user_id IS NULL)',
         [userId]
       );
 
-      // Get unread count (only from today)
+      // Get unread count
       const [unreadResult] = await db.execute(
-        'SELECT COUNT(*) as unread FROM notifications WHERE (user_id = ? OR user_id IS NULL) AND is_read = 0 AND DATE(created_at) = CURDATE()',
+        'SELECT COUNT(*) as unread FROM notifications WHERE (user_id = ? OR user_id IS NULL) AND is_read = 0',
         [userId]
       );
 
