@@ -4,28 +4,42 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { sendPasswordResetOTP } = require('../services/emailService');
 const { generateOTP, storeOTP, verifyOTP: verifyOTPFromStore, deleteOTP } = require('../utils/otpStore');
+const { checkAccountLockout, recordFailedAttempt, clearFailedAttempts, getClientIP } = require('../middleware/accountLockout');
+const { validatePasswordStrength, validateEmail } = require('../middleware/inputSanitizer');
 
-// Helper function to get client IP address
-function getClientIP(req) {
-  return req.headers['x-forwarded-for'] || 
-         req.headers['x-real-ip'] || 
-         req.connection.remoteAddress || 
-         req.socket.remoteAddress || 
-         req.ip || 
-         'unknown';
-}
+// Note: getClientIP is now imported from accountLockout middleware
 
 // Login for general users
 const loginUser = async (req, res) => {
     try {
         const { email, password } = req.body;
 
-        console.log('Login attempt for user:', email);
-
+        // Validate input
         if (!email || !password) {
             return res.status(400).json({
                 success: false,
                 message: 'Email and password are required'
+            });
+        }
+
+        // Validate email format
+        if (!validateEmail(email)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid email format'
+            });
+        }
+
+        const clientIP = getClientIP(req);
+
+        // Check account lockout status
+        const lockoutStatus = await checkAccountLockout(email, clientIP);
+        if (lockoutStatus.locked) {
+            const lockoutMinutes = Math.ceil((lockoutStatus.lockoutUntil.getTime() - Date.now()) / 60000);
+            return res.status(429).json({
+                success: false,
+                message: `Account locked due to too many failed login attempts. Please try again after ${lockoutMinutes} minute(s).`,
+                lockoutUntil: lockoutStatus.lockoutUntil
             });
         }
 
@@ -36,42 +50,51 @@ const loginUser = async (req, res) => {
         );
 
         if (users.length === 0) {
-            console.log('User not found:', email);
+            // Record failed attempt even if user doesn't exist (to prevent user enumeration)
+            await recordFailedAttempt(email, clientIP);
             return res.status(401).json({
                 success: false,
-                message: 'Invalid email or password'
+                message: 'Invalid email or password',
+                remainingAttempts: lockoutStatus.remainingAttempts - 1
             });
         }
 
         const user = users[0];
-        console.log('User found:', user.email, 'Password hash starts with:', user.password.substring(0, 10));
 
-        // Handle both plain text and hashed passwords
-        let isPasswordValid = false;
-
-        if (user.password.startsWith('$2y$') || user.password.startsWith('$2b$') || user.password.startsWith('$2a$')) {
-            // Hashed password - use bcrypt compare
-            // Convert PHP bcrypt format ($2y$) to Node.js format ($2b$) if needed
-            const hashToCompare = user.password.replace(/^\$2y\$/, '$2b$');
-            isPasswordValid = await bcrypt.compare(password, hashToCompare);
-            console.log('Bcrypt comparison result:', isPasswordValid);
-        } else {
-            // Plain text password (for backward compatibility)
-            isPasswordValid = password === user.password;
-            console.log('Plain text comparison result:', isPasswordValid);
+        // SECURITY: Reject plain text passwords - only accept bcrypt hashed passwords
+        if (!user.password.startsWith('$2y$') && !user.password.startsWith('$2b$') && !user.password.startsWith('$2a$')) {
+            // This is a security issue - password must be hashed
+            if (process.env.NODE_ENV !== 'development') {
+                await recordFailedAttempt(email, clientIP);
+                return res.status(401).json({
+                    success: false,
+                    message: 'Invalid email or password',
+                    remainingAttempts: lockoutStatus.remainingAttempts - 1
+                });
+            }
+            // In development, warn but allow (remove this in production)
+            console.warn('⚠️ SECURITY WARNING: User has plain text password. This should be migrated to bcrypt hash.');
         }
 
+        // Convert PHP bcrypt format ($2y$) to Node.js format ($2b$) if needed
+        const hashToCompare = user.password.replace(/^\$2y\$/, '$2b$');
+        const isPasswordValid = await bcrypt.compare(password, hashToCompare);
+
         if (!isPasswordValid) {
-            console.log('Password validation failed for user:', email);
+            // Record failed attempt
+            const attemptResult = await recordFailedAttempt(email, clientIP);
             return res.status(401).json({
                 success: false,
-                message: 'Invalid email or password'
+                message: 'Invalid email or password',
+                remainingAttempts: attemptResult.remainingAttempts
             });
         }
 
+        // Clear failed attempts on successful login
+        await clearFailedAttempts(email, clientIP);
+
         // Log successful login activity
         try {
-            const clientIP = getClientIP(req);
             await pool.execute(`
                 INSERT INTO activity_logs (general_user_id, action, details, ip_address, created_at)
                 VALUES (?, 'user_login', ?, ?, NOW())
@@ -414,6 +437,24 @@ const registerUser = async (req, res) => {
             return res.status(400).json({
                 success: false,
                 message: 'Invalid user type. Must be CITIZEN'
+            });
+        }
+
+        // Validate email format
+        if (!validateEmail(email)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid email format'
+            });
+        }
+
+        // Validate password strength
+        const passwordValidation = validatePasswordStrength(password);
+        if (!passwordValidation.valid) {
+            return res.status(400).json({
+                success: false,
+                message: 'Password does not meet requirements',
+                errors: passwordValidation.errors
             });
         }
 

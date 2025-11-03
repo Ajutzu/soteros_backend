@@ -1,26 +1,22 @@
 const express = require('express');
 const router = express.Router();
+const { loginLimiter, passwordResetLimiter, registrationLimiter } = require('../middleware/rateLimiter');
 const { loginUser, loginAdmin, loginStaff, registerUser, forgotPassword, resetPassword, verifyOTP, logoutUser, logoutAdmin, logoutStaff } = require('../controllers/authController');
 
-// User login route
-router.post('/login/user', loginUser);
+// User login route with rate limiting
+router.post('/login/user', loginLimiter, loginUser);
 
-// Admin login route
-router.post('/login/admin', loginAdmin);
+// Admin login route with rate limiting
+router.post('/login/admin', loginLimiter, loginAdmin);
 
-// Staff login route
-router.post('/login/staff', loginStaff);
+// Staff login route with rate limiting
+router.post('/login/staff', loginLimiter, loginStaff);
 
-// User registration route
-console.log('Setting up POST /register route...');
-router.post('/register', (req, res, next) => {
-    console.log('Registration route hit via router!');
-    console.log('Request body:', req.body);
-    registerUser(req, res, next);
-});
+// User registration route with rate limiting
+router.post('/register', registrationLimiter, registerUser);
 
-// Password reset routes
-router.post('/forgot-password', forgotPassword);
+// Password reset routes with rate limiting
+router.post('/forgot-password', passwordResetLimiter, forgotPassword);
 router.post('/verify-otp', verifyOTP);
 router.post('/reset-password', resetPassword);
 

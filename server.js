@@ -4,6 +4,7 @@ const bodyParser = require('body-parser');
 const path = require('path');
 const WebSocket = require('ws');
 const http = require('http');
+const helmet = require('helmet');
 require('dotenv').config();
 
 // Set NODE_ENV to development if not set (for debugging)
@@ -13,6 +14,29 @@ if (!process.env.NODE_ENV) {
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+
+// Security middleware - Helmet for security headers
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "https:", "http:"],
+      connectSrc: ["'self'"],
+      fontSrc: ["'self'", "data:"],
+      objectSrc: ["'none'"],
+      mediaSrc: ["'self'"],
+      frameSrc: ["'none'"],
+    },
+  },
+  crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
+
+// Input sanitization middleware
+const { sanitizeInput } = require('./middleware/inputSanitizer');
+app.use(sanitizeInput);
 
 // Middleware - Enhanced CORS configuration
 app.use(cors({
@@ -114,7 +138,13 @@ const adminNotificationsRoutes = require('./routes/adminNotificationsRoutes');
 const routingRoutes = require('./routes/routingRoutes');
 const geocodingRoutes = require('./routes/geocodingRoutes');
 
-// Use routes
+// Rate limiting middleware
+const { loginLimiter, passwordResetLimiter, registrationLimiter, apiLimiter } = require('./middleware/rateLimiter');
+
+// Apply general API rate limiting
+app.use('/api', apiLimiter);
+
+// Use routes with rate limiting on specific endpoints
 app.use('/api/auth', authRoutes);
 app.use('/api/admin/auth', adminAuthRoutes);
 app.use('/api/admin/dashboard', adminDashboardRoutes);
