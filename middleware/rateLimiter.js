@@ -17,14 +17,21 @@ const generalLimiter = rateLimit({
 // This rate limiter is a secondary protection that tracks per email+IP combination
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // Limit each email+IP combination to 10 login requests per windowMs
+  max: 10, // Limit each email+IP combination to 10 FAILED login requests per windowMs
   message: {
     success: false,
     message: 'Too many login attempts for this account, please try again after 15 minutes.'
   },
   standardHeaders: true,
   legacyHeaders: false,
-  skipSuccessfulRequests: true, // Don't count successful login requests
+  // Only count failed requests (status code >= 400)
+  skipSuccessfulRequests: true,
+  // Custom skip function to ensure only failed logins are counted
+  skip: (req, res) => {
+    // Don't count if response is successful (status < 400)
+    // This ensures successful logins are NOT recorded in attempt count
+    return res.statusCode < 400;
+  },
   // Use a custom key generator to track by email+IP combination (not just IP)
   keyGenerator: (req) => {
     const email = req.body?.email || req.body?.username || 'unknown';

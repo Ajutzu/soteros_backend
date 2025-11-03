@@ -165,12 +165,32 @@ const loginAdmin = async (req, res) => {
     try {
         const { email, password } = req.body;
 
-        console.log('Admin login attempt for:', email);
-
+        // Validate input
         if (!email || !password) {
             return res.status(400).json({
                 success: false,
                 message: 'Email and password are required'
+            });
+        }
+
+        // Validate email format
+        if (!validateEmail(email)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid email format'
+            });
+        }
+
+        const clientIP = getClientIP(req);
+
+        // Check account lockout status
+        const lockoutStatus = await checkAccountLockout(email, clientIP);
+        if (lockoutStatus.locked) {
+            const lockoutMinutes = Math.ceil((lockoutStatus.lockoutUntil.getTime() - Date.now()) / 60000);
+            return res.status(429).json({
+                success: false,
+                message: `Account locked due to too many failed login attempts. Please try again after ${lockoutMinutes} minute(s).`,
+                lockoutUntil: lockoutStatus.lockoutUntil
             });
         }
 
@@ -181,10 +201,12 @@ const loginAdmin = async (req, res) => {
         );
 
         if (admins.length === 0) {
-            console.log('Admin not found:', email);
+            // Record failed attempt even if admin doesn't exist (to prevent user enumeration)
+            await recordFailedAttempt(email, clientIP);
             return res.status(401).json({
                 success: false,
-                message: 'Invalid email or password'
+                message: 'Invalid email or password',
+                remainingAttempts: lockoutStatus.remainingAttempts - 1
             });
         }
 
@@ -207,16 +229,20 @@ const loginAdmin = async (req, res) => {
         }
 
         if (!isPasswordValid) {
-            console.log('Admin password validation failed for:', email);
+            // Record failed attempt
+            const attemptResult = await recordFailedAttempt(email, clientIP);
             return res.status(401).json({
                 success: false,
-                message: 'Invalid email or password'
+                message: 'Invalid email or password',
+                remainingAttempts: attemptResult.remainingAttempts
             });
         }
 
+        // Clear failed attempts on successful login
+        await clearFailedAttempts(email, clientIP);
+
         // Log successful admin login activity
         try {
-            const clientIP = getClientIP(req);
             await pool.execute(`
                 INSERT INTO activity_logs (admin_id, action, details, ip_address, created_at)
                 VALUES (?, 'admin_login', ?, ?, NOW())
@@ -286,12 +312,32 @@ const loginStaff = async (req, res) => {
     try {
         const { email, password } = req.body;
 
-        console.log('Staff login attempt for:', email);
-
+        // Validate input
         if (!email || !password) {
             return res.status(400).json({
                 success: false,
                 message: 'Email and password are required'
+            });
+        }
+
+        // Validate email format
+        if (!validateEmail(email)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid email format'
+            });
+        }
+
+        const clientIP = getClientIP(req);
+
+        // Check account lockout status
+        const lockoutStatus = await checkAccountLockout(email, clientIP);
+        if (lockoutStatus.locked) {
+            const lockoutMinutes = Math.ceil((lockoutStatus.lockoutUntil.getTime() - Date.now()) / 60000);
+            return res.status(429).json({
+                success: false,
+                message: `Account locked due to too many failed login attempts. Please try again after ${lockoutMinutes} minute(s).`,
+                lockoutUntil: lockoutStatus.lockoutUntil
             });
         }
 
@@ -302,10 +348,12 @@ const loginStaff = async (req, res) => {
         );
 
         if (staff.length === 0) {
-            console.log('Staff not found:', email);
+            // Record failed attempt even if staff doesn't exist (to prevent user enumeration)
+            await recordFailedAttempt(email, clientIP);
             return res.status(401).json({
                 success: false,
-                message: 'Invalid email or password'
+                message: 'Invalid email or password',
+                remainingAttempts: lockoutStatus.remainingAttempts - 1
             });
         }
 
@@ -328,12 +376,17 @@ const loginStaff = async (req, res) => {
         }
 
         if (!isPasswordValid) {
-            console.log('Staff password validation failed for:', email);
+            // Record failed attempt
+            const attemptResult = await recordFailedAttempt(email, clientIP);
             return res.status(401).json({
                 success: false,
-                message: 'Invalid email or password'
+                message: 'Invalid email or password',
+                remainingAttempts: attemptResult.remainingAttempts
             });
         }
+
+        // Clear failed attempts on successful login
+        await clearFailedAttempts(email, clientIP);
 
         // Log successful staff login activity
         try {
