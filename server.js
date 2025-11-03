@@ -142,14 +142,15 @@ const geocodingRoutes = require('./routes/geocodingRoutes');
 const { loginLimiter, passwordResetLimiter, registrationLimiter, apiLimiter } = require('./middleware/rateLimiter');
 
 // Apply general API rate limiting (but exclude auth routes as they have specific rate limiters)
-app.use('/api', (req, res, next) => {
-  // Skip rate limiting for auth endpoints - they have their own rate limiters
-  if (req.path.startsWith('/auth') || req.path.startsWith('/admin/auth')) {
-    return next();
-  }
-  // Apply general API rate limiting to other routes
-  return apiLimiter(req, res, next);
-});
+// DISABLED: API rate limiting removed per user request
+// app.use('/api', (req, res, next) => {
+//   // Skip rate limiting for auth endpoints - they have their own rate limiters
+//   if (req.path.startsWith('/auth') || req.path.startsWith('/admin/auth')) {
+//     return next();
+//   }
+//   // Apply general API rate limiting to other routes
+//   return apiLimiter(req, res, next);
+// });
 
 // Use routes with rate limiting on specific endpoints
 app.use('/api/auth', authRoutes);
