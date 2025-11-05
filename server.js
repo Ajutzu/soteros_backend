@@ -139,7 +139,7 @@ const routingRoutes = require('./routes/routingRoutes');
 const geocodingRoutes = require('./routes/geocodingRoutes');
 
 // Rate limiting middleware
-const { loginLimiter, passwordResetLimiter, registrationLimiter, apiLimiter } = require('./middleware/rateLimiter');
+const { loginLimiter, passwordResetLimiter } = require('./middleware/rateLimiter');
 
 // Apply general API rate limiting (but exclude auth routes as they have specific rate limiters)
 // DISABLED: API rate limiting removed per user request
