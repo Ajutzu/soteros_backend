@@ -749,7 +749,9 @@ async function sendAlertEmail(alertId, alertData) {
     }
 
     // Prepare email content with all alert information
-    const emailSubject = `[${type.toUpperCase()}] ${title}`;
+    const createdDate = created_at ? new Date(created_at).toLocaleString() : new Date().toLocaleString();
+    const sentDate = new Date().toLocaleString();
+    const emailSubject = `[${type.toUpperCase()}] ${title} - Created On: ${createdDate}, Sent on: ${sentDate}`;
     const emailHtml = `
       <div style="font-family: 'Inter', 'Segoe UI', Arial, sans-serif; max-width: 650px; margin: 0 auto; background: #ffffff; border-radius: 24px; box-shadow: 0 8px 32px rgba(0,0,0,0.12); overflow: hidden;">
         <div style="background: linear-gradient(135deg, ${getAlertColor(type)} 0%, ${getAlertColor(type)}ee 100%); color: white; padding: 42px 32px; text-align: center; position: relative;">
