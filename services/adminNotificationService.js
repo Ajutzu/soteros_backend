@@ -309,8 +309,8 @@ class AdminNotificationService {
         related_id,
         action_url,
         metadata,
-        DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') as created_at,
-        DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s') as updated_at
+        created_at,
+        updated_at
       FROM admin_notifications
       WHERE ${whereClause}
       ORDER BY 
@@ -355,8 +355,31 @@ class AdminNotificationService {
             parsedMetadata = null;
           }
         }
+        // Convert Date objects to ISO strings for proper timezone handling
+        let created_at = null;
+        if (n.created_at) {
+          if (n.created_at instanceof Date) {
+            created_at = n.created_at.toISOString();
+          } else {
+            const date = new Date(n.created_at);
+            created_at = !isNaN(date.getTime()) ? date.toISOString() : null;
+          }
+        }
+        
+        let updated_at = null;
+        if (n.updated_at) {
+          if (n.updated_at instanceof Date) {
+            updated_at = n.updated_at.toISOString();
+          } else {
+            const date = new Date(n.updated_at);
+            updated_at = !isNaN(date.getTime()) ? date.toISOString() : null;
+          }
+        }
+
         return {
           ...n,
+          created_at,
+          updated_at,
           metadata: parsedMetadata
         };
       }),
