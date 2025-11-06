@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../config/conn');
 const { sendIncidentAssignmentEmail, sendStaffAssignmentEmail } = require('../services/emailService');
-const { authenticateUser, authenticateAdmin, authenticateStaff } = require('../middleware/authMiddleware');
+const { authenticateUser, authenticateAdmin, authenticateStaff, authenticateAny } = require('../middleware/authMiddleware');
 const NotificationService = require('../services/notificationService');
 const AdminNotificationService = require('../services/adminNotificationService');
 const path = require('path');
@@ -659,10 +659,12 @@ router.get('/', authenticateAdmin, async (req, res) => {
 
 
 
-// Get incident report by ID - PROTECTED ENDPOINT
-router.get('/:id', authenticateAdmin, async (req, res) => {
+// Get incident report by ID - PROTECTED ENDPOINT (Admin and Staff)
+router.get('/:id', authenticateAny, async (req, res) => {
   try {
     const { id } = req.params;
+    const userType = req.userType; // 'admin', 'staff', or 'user'
+    const userId = req.user.id || req.user.user_id || req.user.admin_id || req.user.staff_id;
 
     const [incidents] = await pool.execute(`
       SELECT
@@ -697,9 +699,44 @@ router.get('/:id', authenticateAdmin, async (req, res) => {
       });
     }
 
+    const incident = incidents[0];
+
+    // Authorization check: Staff can only view incidents assigned to them or their team
+    if (userType === 'staff') {
+      const staffId = userId;
+      
+      // Get staff member's team ID
+      const [staffData] = await pool.execute(
+        'SELECT assigned_team_id FROM staff WHERE id = ?',
+        [staffId]
+      );
+      
+      const staffTeamId = staffData.length > 0 ? staffData[0].assigned_team_id : null;
+      
+      // Check if incident is assigned to this staff member individually
+      const isAssignedToStaff = incident.assigned_staff_id === staffId;
+      
+      // Check if incident is assigned to staff's team (single assignment)
+      const isAssignedToTeam = incident.assigned_team_id === staffTeamId;
+      
+      // Check if incident is assigned to staff's team (multiple team assignments)
+      let isAssignedToMultipleTeams = false;
+      if (incident.assigned_team_ids && staffTeamId) {
+        const teamIds = incident.assigned_team_ids.split(',').map(id => Number(id.trim()));
+        isAssignedToMultipleTeams = teamIds.includes(staffTeamId);
+      }
+      
+      if (!isAssignedToStaff && !isAssignedToTeam && !isAssignedToMultipleTeams) {
+        return res.status(403).json({
+          success: false,
+          message: 'You do not have permission to view this incident'
+        });
+      }
+    }
+
     res.json({
       success: true,
-      incident: incidents[0]
+      incident: incident
     });
 
   } catch (error) {
