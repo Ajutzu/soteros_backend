@@ -2,12 +2,13 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../config/conn');
 const { sendIncidentAssignmentEmail, sendStaffAssignmentEmail } = require('../services/emailService');
-const { authenticateUser, authenticateAdmin, authenticateStaff } = require('../middleware/authMiddleware');
+const { authenticateUser, authenticateAdmin, authenticateStaff, authenticateAny } = require('../middleware/authMiddleware');
 const NotificationService = require('../services/notificationService');
 const AdminNotificationService = require('../services/adminNotificationService');
 const path = require('path');
 const fs = require('fs');
 const { uploadIncident } = require('../config/cloudinary');
+const { getClientIP } = require('../utils/ipUtils');
 
 // Submit incident report (authenticated users) - Using Cloudinary
 router.post('/report', authenticateUser, uploadIncident.array('attachments', 5), async (req, res) => {
@@ -174,7 +175,7 @@ router.post('/report', authenticateUser, uploadIncident.array('attachments', 5),
 
     // Log incident report submission
     try {
-      const clientIP = req.headers['x-forwarded-for'] || req.connection.remoteAddress || req.ip || 'unknown';
+      const clientIP = getClientIP(req); // Use normalized IP utility
       await pool.execute(`
         INSERT INTO activity_logs (general_user_id, action, details, ip_address, created_at)
         VALUES (?, 'incident_report_submit', ?, ?, NOW())
@@ -369,11 +370,8 @@ router.post('/report-guest', uploadIncident.array('attachments', 5), async (req,
 
     // Check daily report limit for guests by IP address (maximum 2 reports per day)
     try {
-      const clientIP = req.headers['x-forwarded-for'] || req.connection.remoteAddress || req.ip || 'unknown';
-      
-      // Get IP address (handle forwarded IPs)
-      const actualIP = clientIP.split(',')[0].trim();
-      console.log(`🔍 [IP CHECK] Raw IP: ${clientIP}, Extracted IP: ${actualIP}`);
+      const actualIP = getClientIP(req); // Use normalized IP utility
+      console.log(`🔍 [IP CHECK] Normalized IP: ${actualIP}`);
       
       // Count guest reports from this IP address today
       const [guestReports] = await pool.execute(
@@ -534,9 +532,7 @@ router.post('/report-guest', uploadIncident.array('attachments', 5), async (req,
 
     // Log guest incident report submission (non-critical operation)
     try {
-      const clientIP = req.headers['x-forwarded-for'] || req.connection.remoteAddress || req.ip || 'unknown';
-      // Use same IP extraction logic as in limit check
-      const actualIP = clientIP.split(',')[0].trim();
+      const actualIP = getClientIP(req); // Use normalized IP utility (already handles splitting)
       console.log(`💾 [ACTIVITY LOG] Storing IP: ${actualIP} for guest incident report`);
       await pool.execute(`
         INSERT INTO activity_logs (general_user_id, action, details, ip_address, created_at)
@@ -659,10 +655,12 @@ router.get('/', authenticateAdmin, async (req, res) => {
 
 
 
-// Get incident report by ID - PROTECTED ENDPOINT
-router.get('/:id', authenticateAdmin, async (req, res) => {
+// Get incident report by ID - PROTECTED ENDPOINT (Admin and Staff)
+router.get('/:id', authenticateAny, async (req, res) => {
   try {
     const { id } = req.params;
+    const userType = req.userType; // 'admin', 'staff', or 'user'
+    const userId = req.user.id || req.user.user_id || req.user.admin_id || req.user.staff_id;
 
     const [incidents] = await pool.execute(`
       SELECT
@@ -697,9 +695,44 @@ router.get('/:id', authenticateAdmin, async (req, res) => {
       });
     }
 
+    const incident = incidents[0];
+
+    // Authorization check: Staff can only view incidents assigned to them or their team
+    if (userType === 'staff') {
+      const staffId = userId;
+      
+      // Get staff member's team ID
+      const [staffData] = await pool.execute(
+        'SELECT assigned_team_id FROM staff WHERE id = ?',
+        [staffId]
+      );
+      
+      const staffTeamId = staffData.length > 0 ? staffData[0].assigned_team_id : null;
+      
+      // Check if incident is assigned to this staff member individually
+      const isAssignedToStaff = incident.assigned_staff_id === staffId;
+      
+      // Check if incident is assigned to staff's team (single assignment)
+      const isAssignedToTeam = incident.assigned_team_id === staffTeamId;
+      
+      // Check if incident is assigned to staff's team (multiple team assignments)
+      let isAssignedToMultipleTeams = false;
+      if (incident.assigned_team_ids && staffTeamId) {
+        const teamIds = incident.assigned_team_ids.split(',').map(id => Number(id.trim()));
+        isAssignedToMultipleTeams = teamIds.includes(staffTeamId);
+      }
+      
+      if (!isAssignedToStaff && !isAssignedToTeam && !isAssignedToMultipleTeams) {
+        return res.status(403).json({
+          success: false,
+          message: 'You do not have permission to view this incident'
+        });
+      }
+    }
+
     res.json({
       success: true,
-      incident: incidents[0]
+      incident: incident
     });
 
   } catch (error) {
@@ -780,7 +813,7 @@ router.put('/:id/validate', authenticateAdmin, async (req, res) => {
 
         console.log('Final created_by value to be inserted:', finalCreatedBy);
 
-        const clientIP = req.headers['x-forwarded-for'] || req.connection.remoteAddress || req.ip || 'unknown';
+        const clientIP = getClientIP(req); // Use normalized IP utility
 
         await pool.execute(`
           INSERT INTO activity_logs (admin_id, action, details, ip_address, created_at)
@@ -1087,7 +1120,7 @@ router.put('/:id/assign-teams', authenticateAdmin, async (req, res) => {
         ? created_by
         : (req.admin?.admin_id || req.user?.id || null);
 
-      const clientIP = req.headers['x-forwarded-for'] || req.connection.remoteAddress || req.ip || 'unknown';
+      const clientIP = getClientIP(req); // Use normalized IP utility
       const teamNames = teams.map(t => t.name).join(', ');
 
       await pool.execute(`
@@ -1581,7 +1614,7 @@ router.put('/:id/assign-team', authenticateAdmin, async (req, res) => {
 
         console.log('Final created_by value to be inserted:', finalCreatedBy);
 
-        const clientIP = req.headers['x-forwarded-for'] || req.connection.remoteAddress || req.ip || 'unknown';
+        const clientIP = getClientIP(req); // Use normalized IP utility
 
         await pool.execute(`
           INSERT INTO activity_logs (admin_id, action, details, ip_address, created_at)
@@ -1739,7 +1772,7 @@ router.put('/:id/assign-staff', authenticateAdmin, async (req, res) => {
 
       console.log('Final created_by value to be inserted:', finalCreatedBy);
 
-      const clientIP = req.headers['x-forwarded-for'] || req.connection.remoteAddress || req.ip || 'unknown';
+      const clientIP = getClientIP(req); // Use normalized IP utility
 
       await pool.execute(`
         INSERT INTO activity_logs (admin_id, action, details, ip_address, created_at)
@@ -1886,7 +1919,7 @@ router.put('/:id/update-status', authenticateStaff, async (req, res) => {
 
         console.log('Final created_by value to be inserted:', finalCreatedBy);
 
-        const clientIP = req.headers['x-forwarded-for'] || req.connection.remoteAddress || req.ip || 'unknown';
+        const clientIP = getClientIP(req); // Use normalized IP utility
 
         await pool.execute(`
           INSERT INTO activity_logs (staff_id, action, details, ip_address, created_at)
