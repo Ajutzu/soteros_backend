@@ -15,6 +15,10 @@ if (!process.env.NODE_ENV) {
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Trust proxy - Required when behind reverse proxy, load balancer, or hosting services (Vercel, Render, etc.)
+// This allows Express to trust the x-forwarded-for and x-real-ip headers
+app.set('trust proxy', true);
+
 // Security middleware - Helmet for security headers
 app.use(helmet({
   contentSecurityPolicy: {

@@ -1,5 +1,6 @@
 const pool = require('../config/conn');
 const NodeCache = require('node-cache');
+const { getClientIP: getNormalizedIP } = require('../utils/ipUtils');
 
 // Cache for tracking login attempts (in-memory for quick access)
 // This could also be stored in database for distributed systems
@@ -307,17 +308,12 @@ async function cleanupExpiredAttempts() {
 }
 
 /**
- * Get client IP address from request
+ * Get client IP address from request (uses shared utility)
  * @param {object} req - Express request object
- * @returns {string} - IP address
+ * @returns {string} - Normalized IP address
  */
 function getClientIP(req) {
-  return req.ip || 
-         req.connection?.remoteAddress || 
-         req.socket?.remoteAddress ||
-         (req.headers['x-forwarded-for'] || '').split(',')[0].trim() ||
-         req.headers['x-real-ip'] ||
-         'unknown';
+  return getNormalizedIP(req);
 }
 
 // Run cleanup every hour to remove expired records
