@@ -61,8 +61,8 @@ router.get('/', authenticateAny, async (req, res) => {
   }
 });
 
-// GET - Get team by ID (admin and staff can access)
-router.get('/:id', authenticateAny, async (req, res) => {
+// GET - Get team by ID
+router.get('/:id', authenticateAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     
