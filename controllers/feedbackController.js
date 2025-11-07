@@ -1,15 +1,6 @@
 const pool = require('../config/conn');
 const jwt = require('jsonwebtoken');
-
-// Helper function to get client IP address
-function getClientIP(req) {
-  return req.headers['x-forwarded-for'] ||
-         req.headers['x-real-ip'] ||
-         req.connection.remoteAddress ||
-         req.socket.remoteAddress ||
-         req.ip ||
-         'unknown';
-}
+const { getClientIP } = require('../utils/ipUtils');
 
 // Submit feedback
 const submitFeedback = async (req, res) => {
