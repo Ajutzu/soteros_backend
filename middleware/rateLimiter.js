@@ -1,4 +1,5 @@
 const rateLimit = require('express-rate-limit');
+const { getClientIP } = require('../utils/ipUtils');
 
 // Rate limiter for login endpoints - tracks by email+IP to prevent one user blocking others from same IP
 // Note: Account lockout (5 failed attempts per email+IP) is the primary protection
@@ -23,7 +24,7 @@ const loginLimiter = rateLimit({
   // Use a custom key generator to track by email+IP combination (not just IP)
   keyGenerator: (req) => {
     const email = req.body?.email || req.body?.username || 'unknown';
-    const ip = req.ip || req.connection?.remoteAddress || req.socket?.remoteAddress || 'unknown';
+    const ip = getClientIP(req); // Use normalized IP
     // Track by email+IP combination so one user doesn't block others from same IP
     return `login_${email}_${ip}`;
   },
@@ -42,7 +43,7 @@ const passwordResetLimiter = rateLimit({
   // Track by email+IP combination so one user doesn't block others from same IP
   keyGenerator: (req) => {
     const email = req.body?.email || 'unknown';
-    const ip = req.ip || req.connection?.remoteAddress || req.socket?.remoteAddress || 'unknown';
+    const ip = getClientIP(req); // Use normalized IP
     return `password_reset_${email}_${ip}`;
   },
 });
