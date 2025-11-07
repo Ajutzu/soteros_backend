@@ -6,6 +6,10 @@ const { getClientIP: getNormalizedIP } = require('../utils/ipUtils');
 // This could also be stored in database for distributed systems
 const loginAttemptsCache = new NodeCache({ stdTTL: 900 }); // 15 minutes TTL
 
+// Cache to track recent attempts to prevent duplicate increments from rapid sequential calls
+// (e.g., frontend trying user/staff/admin endpoints in quick succession)
+const recentAttemptsCache = new NodeCache({ stdTTL: 3 }); // 3 seconds TTL
+
 // Maximum failed login attempts before lockout
 const MAX_FAILED_ATTEMPTS = 5;
 // Progressive lockout durations
@@ -45,6 +49,25 @@ function getAttemptKey(identifier, ip) {
  */
 async function recordFailedAttempt(identifier, ip) {
   const key = getAttemptKey(identifier, ip);
+  const recentKey = `recent_${key}`;
+  
+  // Check if we recently recorded an attempt for this identifier+IP (within 3 seconds)
+  // This prevents multiple increments when frontend tries multiple login endpoints rapidly
+  const recentAttempt = recentAttemptsCache.get(recentKey);
+  const now = Date.now();
+  
+  if (recentAttempt && (now - recentAttempt) < 3000) {
+    // Recent attempt recorded within last 3 seconds, just return current status without incrementing
+    const lockoutCheck = await checkAccountLockout(identifier, ip);
+    return {
+      locked: lockoutCheck.locked,
+      remainingAttempts: lockoutCheck.remainingAttempts,
+      lockoutUntil: lockoutCheck.lockoutUntil
+    };
+  }
+  
+  // Mark that we're recording an attempt now
+  recentAttemptsCache.set(recentKey, now, 3);
   
   // First, check if account is already locked (to avoid unnecessary increments)
   const lockoutCheck = await checkAccountLockout(identifier, ip);
@@ -148,7 +171,11 @@ async function recordFailedAttempt(identifier, ip) {
  */
 async function clearFailedAttempts(identifier, ip) {
   const key = getAttemptKey(identifier, ip);
+  const recentKey = `recent_${key}`;
+  
+  // Clear both caches
   loginAttemptsCache.del(key);
+  recentAttemptsCache.del(recentKey);
   
   try {
     await pool.execute(
