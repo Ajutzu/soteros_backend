@@ -3,12 +3,12 @@
  */
 
 /**
- * Normalize IPv6-mapped IPv4 address to IPv4 format
+ * Normalize a single IP address
  * Converts ::ffff:192.168.1.1 to 192.168.1.1
- * @param {string} ip - IP address (can be IPv4, IPv6, or IPv6-mapped IPv4)
+ * @param {string} ip - Single IP address (can be IPv4, IPv6, or IPv6-mapped IPv4)
  * @returns {string} - Normalized IP address
  */
-function normalizeIP(ip) {
+function normalizeSingleIP(ip) {
   if (!ip || ip === 'unknown') return 'unknown';
   
   // Handle IPv6-mapped IPv4 addresses (::ffff:xxx.xxx.xxx.xxx)
@@ -21,14 +21,26 @@ function normalizeIP(ip) {
     return ip.split('::ffff:')[1] || ip;
   }
   
-  // Handle x-forwarded-for header (may contain multiple IPs)
+  return ip.trim();
+}
+
+/**
+ * Normalize IPv6-mapped IPv4 address to IPv4 format
+ * Converts ::ffff:192.168.1.1 to 192.168.1.1
+ * Handles comma-separated IPs: "49.149.137.139, 172.68.175.48, 10.17.212.210"
+ * @param {string} ip - IP address (can be IPv4, IPv6, IPv6-mapped IPv4, or comma-separated list)
+ * @returns {string} - Normalized IP address(es) - comma-separated if multiple
+ */
+function normalizeIP(ip) {
+  if (!ip || ip === 'unknown') return 'unknown';
+  
+  // Handle comma-separated IPs (e.g., "49.149.137.139, 172.68.175.48, 10.17.212.210")
   if (ip.includes(',')) {
-    ip = ip.split(',')[0].trim();
-    // Recursively normalize the first IP
-    return normalizeIP(ip);
+    const ips = ip.split(',').map(ip => normalizeSingleIP(ip.trim())).filter(ip => ip && ip !== 'unknown');
+    return ips.join(', ');
   }
   
-  return ip;
+  return normalizeSingleIP(ip);
 }
 
 /**
@@ -55,7 +67,8 @@ function getClientIP(req, debug = false) {
       extractedIP = normalizeIP(forwardedIPs[0]);
       source = 'x-forwarded-for';
       if (debug) {
-        console.log(`🌐 [IP DEBUG] Source: ${source}, Raw: ${req.headers['x-forwarded-for']}, Extracted: ${extractedIP}`);
+        const allIPs = normalizeIP(req.headers['x-forwarded-for']);
+        console.log(`🌐 [IP DEBUG] Source: ${source}, Raw: ${req.headers['x-forwarded-for']}, All IPs: ${allIPs}, Client IP: ${extractedIP}`);
       }
       return extractedIP;
     }
@@ -97,5 +110,6 @@ function getClientIP(req, debug = false) {
 
 module.exports = {
   normalizeIP,
+  normalizeSingleIP,
   getClientIP
 };
