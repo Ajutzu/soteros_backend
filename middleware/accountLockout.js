@@ -46,12 +46,34 @@ function getAttemptKey(identifier, ip) {
 async function recordFailedAttempt(identifier, ip) {
   const key = getAttemptKey(identifier, ip);
   
-  // First, check database for existing attempts and sync with cache
-  let attempts = loginAttemptsCache.get(key);
-  let shouldReset = false;
-  let currentCount = 0;
+  // First, check if account is already locked (to avoid unnecessary increments)
+  const lockoutCheck = await checkAccountLockout(identifier, ip);
+  if (lockoutCheck.locked) {
+    return {
+      locked: true,
+      remainingAttempts: 0,
+      lockoutUntil: lockoutCheck.lockoutUntil
+    };
+  }
+  
+  // Use atomic increment in database to prevent race conditions
+  // This ensures that even with concurrent requests, the count is accurate
+  let newCount = 1;
+  let firstAttempt = Date.now();
   
   try {
+    // First, try to atomically increment the count in the database
+    // This prevents race conditions where multiple requests read the same count
+    await pool.execute(
+      `INSERT INTO login_attempts (identifier, ip_address, attempt_count, created_at, last_attempt)
+       VALUES (?, ?, 1, NOW(), NOW())
+       ON DUPLICATE KEY UPDATE
+       attempt_count = attempt_count + 1,
+       last_attempt = NOW()`,
+      [identifier, ip]
+    );
+    
+    // Now read back the actual count from database (after atomic increment)
     const [dbAttempts] = await pool.execute(
       'SELECT attempt_count, last_attempt, created_at FROM login_attempts WHERE identifier = ? AND ip_address = ?',
       [identifier, ip]
@@ -59,106 +81,58 @@ async function recordFailedAttempt(identifier, ip) {
     
     if (dbAttempts.length > 0) {
       const dbRecord = dbAttempts[0];
-      const lastAttempt = new Date(dbRecord.last_attempt).getTime();
-      const firstAttempt = new Date(dbRecord.created_at).getTime();
-      const lockoutDuration = getLockoutDuration(dbRecord.attempt_count);
-      const lockoutUntil = lastAttempt + lockoutDuration;
+      newCount = dbRecord.attempt_count;
+      firstAttempt = new Date(dbRecord.created_at).getTime();
       
-      // Check if lockout period has expired
-      if (lockoutDuration > 0 && Date.now() < lockoutUntil) {
-        // Still in lockout period, don't increment
-        // Return locked status without incrementing
-        attempts = {
-          count: dbRecord.attempt_count,
-          firstAttempt: firstAttempt
-        };
-        return {
-          locked: true,
-          remainingAttempts: 0,
-          lockoutUntil: new Date(lockoutUntil)
-        };
-      } else if (lockoutDuration > 0 && Date.now() >= lockoutUntil) {
-        // Lockout expired, clear the record and start fresh
-        await clearFailedAttempts(identifier, ip);
-        currentCount = 0;
-        attempts = { count: 0, firstAttempt: Date.now() };
-        shouldReset = true;
-      } else {
-        // Use database count as the current count (don't increment yet)
-        currentCount = dbRecord.attempt_count;
-        // Sync cache with database - use database count if higher
-        if (!attempts || attempts.count < dbRecord.attempt_count) {
-          attempts = {
-            count: dbRecord.attempt_count,
-            firstAttempt: firstAttempt
-          };
-        } else {
-          // Use cache count if it's higher (shouldn't normally happen, but for safety)
-          currentCount = attempts.count;
-        }
-      }
-    } else {
-      // No database record exists, check cache
-      if (attempts) {
-        currentCount = attempts.count;
-      } else {
-        // No attempts found in cache or database, start fresh
-        currentCount = 0;
-        attempts = { count: 0, firstAttempt: Date.now() };
-      }
-    }
-  } catch (error) {
-    // Table might not exist yet - that's okay, we'll use cache only
-    if (!error.message.includes("doesn't exist") && !error.message.includes('ER_NO_SUCH_TABLE')) {
-      console.error('Error checking database for login attempts:', error.message);
-    }
-    // If error and no cache, start fresh
-    if (!attempts) {
-      currentCount = 0;
-      attempts = { count: 0, firstAttempt: Date.now() };
-    } else {
-      currentCount = attempts.count;
-    }
-  }
-  
-  // Increment attempt count from current count
-  const newCount = currentCount + 1;
-  attempts.count = newCount;
-  const lockoutDuration = getLockoutDuration(newCount);
-  const isLocked = lockoutDuration > 0;
-  const remainingAttempts = isLocked ? 0 : Math.max(0, MAX_FAILED_ATTEMPTS - newCount);
-  const lockoutUntil = isLocked ? Date.now() + lockoutDuration : null;
-  
-  // Store in cache
-  loginAttemptsCache.set(key, attempts, 900); // 15 minutes
-  
-  // Store in database for persistence
-  try {
-    if (shouldReset) {
-      // Insert new record after clearing
-      await pool.execute(
-        `INSERT INTO login_attempts (identifier, ip_address, attempt_count, created_at, last_attempt)
-         VALUES (?, ?, ?, NOW(), NOW())`,
-        [identifier, ip, newCount]
-      );
-    } else {
-      // Update existing record or insert new one
-      await pool.execute(
-        `INSERT INTO login_attempts (identifier, ip_address, attempt_count, created_at, last_attempt)
-         VALUES (?, ?, ?, NOW(), NOW())
-         ON DUPLICATE KEY UPDATE
-         attempt_count = ?,
-         last_attempt = NOW()`,
-        [identifier, ip, newCount, newCount]
-      );
+      // Check if lockout should be applied after this increment
+      const lastAttempt = new Date(dbRecord.last_attempt).getTime();
+      const lockoutDuration = getLockoutDuration(newCount);
+      const lockoutUntil = lockoutDuration > 0 ? lastAttempt + lockoutDuration : null;
+      
+      // Update cache with the new count
+      loginAttemptsCache.set(key, {
+        count: newCount,
+        firstAttempt: firstAttempt
+      }, 900); // 15 minutes
+      
+      const isLocked = lockoutDuration > 0;
+      const remainingAttempts = isLocked ? 0 : Math.max(0, MAX_FAILED_ATTEMPTS - newCount);
+      
+      return {
+        locked: isLocked,
+        remainingAttempts: remainingAttempts,
+        lockoutUntil: lockoutUntil ? new Date(lockoutUntil) : null
+      };
     }
   } catch (error) {
     // Table might not exist yet - that's okay, we'll use cache only
     if (!error.message.includes("doesn't exist") && !error.message.includes('ER_NO_SUCH_TABLE')) {
       console.error('Error recording login attempt in database:', error.message);
     }
-    // Don't fail the operation if database logging fails
+    
+    // Fallback to cache-based tracking if database fails
+    let attempts = loginAttemptsCache.get(key);
+    if (!attempts) {
+      attempts = { count: 0, firstAttempt: Date.now() };
+    }
+    newCount = attempts.count + 1;
+    attempts.count = newCount;
+    firstAttempt = attempts.firstAttempt;
+    
+    loginAttemptsCache.set(key, attempts, 900);
   }
+  
+  // Calculate lockout status
+  const lockoutDuration = getLockoutDuration(newCount);
+  const isLocked = lockoutDuration > 0;
+  const remainingAttempts = isLocked ? 0 : Math.max(0, MAX_FAILED_ATTEMPTS - newCount);
+  const lockoutUntil = isLocked ? Date.now() + lockoutDuration : null;
+  
+  // Update cache
+  loginAttemptsCache.set(key, {
+    count: newCount,
+    firstAttempt: firstAttempt
+  }, 900);
 
   return {
     locked: isLocked,
