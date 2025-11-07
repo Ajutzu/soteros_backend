@@ -611,6 +611,8 @@ const sendStaffAccountCreationEmail = async (staffData, plainPassword) => {
   try {
     console.log("📧 Preparing to send staff account creation email to:", staffData.email)
 
+    const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000"
+
     const mailOptions = {
       from: `"${process.env.EMAIL_FROM_NAME || "SoteROS Emergency Management"}" <${process.env.EMAIL_FROM_ADDRESS || process.env.SMTP_USER}>`,
       to: staffData.email,
@@ -702,7 +704,7 @@ const sendStaffAccountCreationEmail = async (staffData, plainPassword) => {
                                             <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 24px;">
                                                 <tr>
                                                     <td align="center">
-                                                        <a href="${process.env.FRONTEND_URL || "http://localhost:3000"}/auth/login" style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: #ffffff; padding: 16px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 15px; box-shadow: 0 4px 6px rgba(16, 185, 129, 0.3);">
+                                                        <a href="${frontendUrl}/auth/login" style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: #ffffff; padding: 16px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 15px; box-shadow: 0 4px 6px rgba(16, 185, 129, 0.3);">
                                                             🚀 Login to Your Account
                                                         </a>
                                                     </td>
