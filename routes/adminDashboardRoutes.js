@@ -249,6 +249,8 @@ router.get('/analytics', async (req, res) => {
     `);
 
     // Get peak hours analysis (incidents by hour of day) with consecutive dates and times
+    // Note: MIN/MAX should already match the hour bucket since we group by HOUR(created_at)
+    // If there's a mismatch, it's likely a timezone conversion issue in the frontend
     const [peakHoursData] = await pool.execute(`
       SELECT
         HOUR(created_at) as hour,
