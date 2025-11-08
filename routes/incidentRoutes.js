@@ -20,7 +20,8 @@ router.post('/report', authenticateUser, uploadIncident.array('attachments', 5),
       latitude,
       longitude,
       priorityLevel,
-      safetyStatus
+      safetyStatus,
+      dateReported
     } = req.body;
 
     // Get uploaded files (now from Cloudinary)
@@ -84,8 +85,21 @@ router.post('/report', authenticateUser, uploadIncident.array('attachments', 5),
     const finalLat = latitude || 13.7565;
     const finalLng = longitude || 121.0583;
 
-    // Current timestamp for date_reported
-    const dateTime = new Date();
+    // Use provided date/time or current timestamp for date_reported
+    let dateTime = new Date();
+    if (dateReported) {
+      try {
+        const parsedDate = new Date(dateReported);
+        if (!isNaN(parsedDate.getTime())) {
+          dateTime = parsedDate;
+          console.log('✅ Using custom date/time:', dateTime.toISOString());
+        } else {
+          console.log('⚠️ Invalid date format, using current time');
+        }
+      } catch (error) {
+        console.log('⚠️ Error parsing date, using current time:', error.message);
+      }
+    }
 
     // Map priority levels to database enum values
     // Validate and map priority levels to database enum values
@@ -158,12 +172,13 @@ router.post('/report', authenticateUser, uploadIncident.array('attachments', 5),
     const [result] = await pool.execute(
       `INSERT INTO incident_reports
        (incident_type, description, longitude, latitude, date_reported, status, reported_by, priority_level, reporter_safe_status, validation_status, attachment)
-       VALUES (?, ?, ?, ?, NOW(), 'pending', ?, ?, ?, 'unvalidated', ?)`,
+       VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, 'unvalidated', ?)`,
       [
         incidentType,
         fullDescription,
         finalLng,
         finalLat,
+        dateTime,
         reportedBy,
         mappedPriority,
         mappedSafety,
@@ -265,7 +280,8 @@ router.post('/report-guest', uploadIncident.array('attachments', 5), async (req,
       priorityLevel,
       safetyStatus,
       guestName,
-      guestContact
+      guestContact,
+      dateReported
     } = req.body;
 
     // Get uploaded files (now from Cloudinary)
@@ -343,8 +359,21 @@ router.post('/report-guest', uploadIncident.array('attachments', 5), async (req,
     const finalLat = latitude || 13.8457;
     const finalLng = longitude || 121.2104;
 
-    // Current timestamp for date_reported
-    const dateTime = new Date();
+    // Use provided date/time or current timestamp for date_reported
+    let dateTime = new Date();
+    if (dateReported) {
+      try {
+        const parsedDate = new Date(dateReported);
+        if (!isNaN(parsedDate.getTime())) {
+          dateTime = parsedDate;
+          console.log('✅ Using custom date/time:', dateTime.toISOString());
+        } else {
+          console.log('⚠️ Invalid date format, using current time');
+        }
+      } catch (error) {
+        console.log('⚠️ Error parsing date, using current time:', error.message);
+      }
+    }
 
     // Map priority levels to database enum values
     const validPriorities = ['low', 'moderate', 'high', 'critical'];
@@ -439,12 +468,13 @@ router.post('/report-guest', uploadIncident.array('attachments', 5), async (req,
       const [result] = await connection.execute(
         `INSERT INTO incident_reports
          (incident_type, description, longitude, latitude, date_reported, status, reported_by, priority_level, reporter_safe_status, validation_status, attachment)
-         VALUES (?, ?, ?, ?, NOW(), 'pending', NULL, ?, ?, 'unvalidated', ?)`,
+         VALUES (?, ?, ?, ?, ?, 'pending', NULL, ?, ?, 'unvalidated', ?)`,
         [
           incidentType,
           fullDescription,
           finalLng,
           finalLat,
+          dateTime,
           mappedPriority,
           mappedSafety,
           attachmentUrls // Now stores JSON array of Cloudinary URLs
@@ -484,7 +514,7 @@ router.post('/report-guest', uploadIncident.array('attachments', 5), async (req,
             latitude: finalLat,
             longitude: finalLng,
             priority_level: mappedPriority,
-            date_reported: new Date().toISOString(),
+            date_reported: dateTime.toISOString(),
             status: 'pending',
             reported_by: null, // Guest user
             reporter_safe_status: mappedSafety,
