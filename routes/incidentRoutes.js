@@ -640,6 +640,307 @@ router.post('/report-guest', uploadIncident.array('attachments', 5), async (req,
   }
 });
 
+// Submit incident report (edit page - no daily limit) - Using Cloudinary
+router.post('/report-edit', uploadIncident.array('attachments', 5), async (req, res) => {
+  try {
+    const {
+      incidentType,
+      description,
+      location,
+      latitude,
+      longitude,
+      priorityLevel,
+      safetyStatus,
+      guestName,
+      guestContact,
+      dateReported
+    } = req.body;
+
+    // Get uploaded files (now from Cloudinary)
+    const attachments = req.files || [];
+    console.log('📤 Uploaded attachments to Cloudinary (edit):', attachments.length);
+    if (attachments.length > 0) {
+      console.log('✅ Cloudinary URLs:', attachments.map(f => f.path));
+    }
+
+    // Validate required fields with better checking
+    const missingFields = [];
+
+    if (!incidentType || incidentType.trim() === '') {
+      missingFields.push('incidentType');
+      console.log('❌ incidentType is missing or empty:', incidentType);
+    } else {
+      console.log('✅ incidentType is valid:', incidentType);
+    }
+
+    if (!description || description.trim() === '') {
+      missingFields.push('description');
+      console.log('❌ description is missing or empty:', description);
+    } else {
+      console.log('✅ description is valid:', description.length, 'characters');
+    }
+
+    if (!location || location.trim() === '') {
+      missingFields.push('location');
+      console.log('❌ location is missing or empty:', location);
+    } else {
+      console.log('✅ location is valid:', location);
+    }
+
+    if (!priorityLevel || priorityLevel.trim() === '') {
+      missingFields.push('priorityLevel');
+      console.log('❌ priorityLevel is missing or empty:', priorityLevel);
+    } else {
+      console.log('✅ priorityLevel is valid:', priorityLevel);
+    }
+
+    if (!safetyStatus || safetyStatus.trim() === '') {
+      missingFields.push('safetyStatus');
+      console.log('❌ safetyStatus is missing or empty:', safetyStatus);
+    } else {
+      console.log('✅ safetyStatus is valid:', safetyStatus);
+    }
+
+    if (!guestName || guestName.trim() === '') {
+      missingFields.push('guestName');
+      console.log('❌ guestName is missing or empty:', guestName);
+    } else {
+      console.log('✅ guestName is valid:', guestName);
+    }
+
+    if (!guestContact || guestContact.trim() === '') {
+      missingFields.push('guestContact');
+      console.log('❌ guestContact is missing or empty:', guestContact);
+    } else {
+      console.log('✅ guestContact is valid:', guestContact);
+    }
+
+    if (missingFields.length > 0) {
+      console.log('🚫 VALIDATION FAILED - Missing fields:', missingFields);
+      return res.status(400).json({
+        success: false,
+        message: `Missing required fields: ${missingFields.join(', ')}`,
+        missingFields: missingFields,
+        receivedData: req.body
+      });
+    }
+
+    console.log('✅ VALIDATION PASSED - All required fields present');
+
+    // Use provided coordinates or default coordinates for Rosario, Batangas
+    const finalLat = latitude || 13.8457;
+    const finalLng = longitude || 121.2104;
+
+    // Use provided date/time or current timestamp for date_reported
+    let dateTime = new Date();
+    if (dateReported) {
+      try {
+        const parsedDate = new Date(dateReported);
+        if (!isNaN(parsedDate.getTime())) {
+          dateTime = parsedDate;
+          console.log('✅ Using custom date/time:', dateTime.toISOString());
+        } else {
+          console.log('⚠️ Invalid date format, using current time');
+        }
+      } catch (error) {
+        console.log('⚠️ Error parsing date, using current time:', error.message);
+      }
+    }
+
+    // Map priority levels to database enum values
+    const validPriorities = ['low', 'moderate', 'high', 'critical'];
+    const mappedPriority = priorityLevel === 'medium' ? 'moderate' : priorityLevel;
+    if (!validPriorities.includes(mappedPriority)) {
+      console.log('⚠️ Invalid priority level:', priorityLevel);
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid priority level. Must be one of: low, medium, high, critical'
+      });
+    }
+
+    // Validate and map safety status to database enum values
+    const validSafetyStatuses = ['safe', 'injured', 'unknown'];
+    const mappedSafety = safetyStatus === 'danger' ? 'unknown' : safetyStatus;
+    if (!validSafetyStatuses.includes(mappedSafety)) {
+      console.log('⚠️ Invalid safety status:', safetyStatus);
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid safety status. Must be one of: safe, injured, danger'
+      });
+    };
+
+    // NO DAILY LIMIT CHECK - This endpoint allows unlimited submissions
+
+    // Use a transaction to ensure data consistency
+    const connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    let incidentId = null;
+    let dbInsertSuccessful = false;
+
+    console.log('🔄 [EDIT INCIDENT] Starting database transaction...');
+
+    try {
+      console.log('📝 [EDIT INCIDENT] Preparing to insert incident report...');
+
+      // Prepare description
+      let fullDescription = description;
+      let attachmentUrls = null;
+      if (attachments.length > 0) {
+        // Store Cloudinary URLs as JSON array for multiple files
+        const urls = attachments.map(file => file.path); // file.path contains full Cloudinary URL
+        attachmentUrls = JSON.stringify(urls);
+        console.log('📎 Storing attachment URLs (edit):', attachmentUrls);
+      }
+      fullDescription += `\n\nLocation: ${location}${latitude && longitude ? `\nGPS Coordinates: ${latitude}, ${longitude}` : ''}`;
+
+      // Insert incident report into database with NULL as reported_by for guests
+      const [result] = await connection.execute(
+        `INSERT INTO incident_reports
+         (incident_type, description, longitude, latitude, date_reported, status, reported_by, priority_level, reporter_safe_status, validation_status, attachment)
+         VALUES (?, ?, ?, ?, ?, 'pending', NULL, ?, ?, 'unvalidated', ?)`,
+        [
+          incidentType,
+          fullDescription,
+          finalLng,
+          finalLat,
+          dateTime,
+          mappedPriority,
+          mappedSafety,
+          attachmentUrls // Now stores JSON array of Cloudinary URLs
+        ]
+      );
+
+      console.log('✅ [EDIT INCIDENT] Incident report inserted successfully with ID:', result.insertId);
+
+      // Insert guest information into incident_report_guests table
+      await connection.execute(
+        `INSERT INTO incident_report_guests (incident_id, guest_name, guest_contact)
+         VALUES (?, ?, ?)`,
+        [result.insertId, guestName.trim(), guestContact.trim()]
+      );
+
+      console.log('✅ [EDIT INCIDENT] Guest information inserted successfully');
+
+      // Commit the transaction
+      await connection.commit();
+      console.log('✅ [EDIT INCIDENT] Transaction committed successfully');
+
+      // Mark DB insert as successful
+      dbInsertSuccessful = true;
+
+      // Use the incident ID as the response ID
+      incidentId = result.insertId;
+
+      // Broadcast real-time notification to admin and staff
+      try {
+        if (global.broadcastIncidentNotification) {
+          const incidentData = {
+            id: result.insertId,
+            incident_id: result.insertId,
+            incident_type: incidentType,
+            description: fullDescription,
+            location: location,
+            latitude: finalLat,
+            longitude: finalLng,
+            priority_level: mappedPriority,
+            date_reported: dateTime.toISOString(),
+            status: 'pending',
+            reported_by: null, // Guest user
+            reporter_safe_status: mappedSafety,
+            validation_status: 'unvalidated',
+            attachment: attachmentUrls,
+            user_name: guestName.trim(),
+            guest_contact: guestContact.trim()
+          };
+          
+          global.broadcastIncidentNotification(incidentData, 'new_incident');
+          console.log('✅ Real-time notification broadcasted for new edit incident');
+        }
+      } catch (broadcastError) {
+        console.error('❌ Failed to broadcast edit incident notification:', broadcastError.message);
+      }
+
+      // Create admin notification in database
+      try {
+        await AdminNotificationService.createIncidentNotification({
+          incidentId: result.insertId,
+          incidentType: incidentType,
+          location: location,
+          priorityLevel: mappedPriority,
+          reportedBy: null,
+          reporterName: guestName.trim(),
+          reporterType: 'guest'
+        });
+        console.log('✅ Admin notification created for edit incident');
+      } catch (notificationError) {
+        console.error('⚠️ Failed to create admin notification (non-critical):', notificationError.message);
+      }
+
+      // Log edit incident report submission (non-critical operation)
+      try {
+        const actualIP = getClientIP(req);
+        console.log(`💾 [ACTIVITY LOG] Storing IP: ${actualIP} for edit incident report`);
+        await pool.execute(`
+          INSERT INTO activity_logs (general_user_id, action, details, ip_address, created_at)
+          VALUES (NULL, 'edit_incident_report_submit', ?, ?, NOW())
+        `, [`Edit incident report submitted: ${incidentType} at ${location} by ${guestName}`, actualIP]);
+        console.log('✅ [EDIT INCIDENT] Activity logged: edit_incident_report_submit');
+      } catch (logError) {
+        console.error('⚠️ [EDIT INCIDENT] Failed to log edit incident report activity (non-critical):', logError.message);
+      }
+
+      console.log('📤 [EDIT INCIDENT] Sending success response...');
+
+      res.status(201).json({
+        success: true,
+        message: 'Incident report submitted successfully (no limit)',
+        incidentId: incidentId,
+        data: {
+          incidentType,
+          location,
+          priorityLevel,
+          safetyStatus,
+          coordinates: { latitude: finalLat, longitude: finalLng },
+          guestName,
+          guestContact
+        }
+      });
+
+      console.log('✅ [EDIT INCIDENT] Response sent successfully');
+
+    } catch (error) {
+      // Rollback on error
+      await connection.rollback();
+      console.error('❌ [EDIT INCIDENT] Transaction rolled back due to error:', error);
+      throw error;
+    } finally {
+      connection.release();
+      console.log('🔌 [EDIT INCIDENT] Database connection released');
+    }
+
+  } catch (error) {
+    console.error('❌ Error submitting edit incident report:', error);
+    console.error('❌ Error details:', {
+      message: error.message,
+      code: error.code,
+      errno: error.errno,
+      sqlState: error.sqlState,
+      sqlMessage: error.sqlMessage,
+      stack: error.stack
+    });
+
+    // Log additional context for debugging
+    console.error('❌ Request body that caused the error:', req.body);
+    console.error('❌ Current timestamp:', new Date().toISOString());
+
+    res.status(500).json({
+      success: false,
+      message: 'Failed to submit incident report. Please try again.'
+    });
+  }
+});
+
 // Get all incident reports (for admin/staff use) - PROTECTED ENDPOINT
 router.get('/', authenticateAdmin, async (req, res) => {
   try {
