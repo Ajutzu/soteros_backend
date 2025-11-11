@@ -868,6 +868,40 @@ async function sendAlertEmail(alertId, alertData) {
     const createdDateFormatted = formatDateForEmail(created_at);
     console.log('📅 Formatted created_at for email:', createdDateFormatted);
     
+    // Helper function to format alert type/severity for display
+    const formatAlertTypeForDisplay = (alertType) => {
+      if (!alertType) return 'ALERT';
+      const lowerType = alertType.toLowerCase();
+      switch (lowerType) {
+        case 'info':
+          return 'INFORMATION';
+        case 'emergency':
+          return 'EMERGENCY';
+        case 'warning':
+          return 'WARNING';
+        default:
+          return alertType.toUpperCase();
+      }
+    };
+    
+    const formatSeverityForDisplay = (severityValue) => {
+      if (!severityValue) return 'INFO';
+      const lowerSeverity = severityValue.toLowerCase();
+      switch (lowerSeverity) {
+        case 'info':
+          return 'INFORMATION';
+        case 'emergency':
+          return 'EMERGENCY';
+        case 'warning':
+          return 'WARNING';
+        default:
+          return severityValue.toUpperCase();
+      }
+    };
+    
+    const displayAlertType = formatAlertTypeForDisplay(type);
+    const displaySeverity = formatSeverityForDisplay(severity);
+    
     // Format current date for "Sent on" timestamp (use server's current time)
     const now = new Date();
     const sentYear = now.getFullYear();
@@ -880,7 +914,7 @@ async function sendAlertEmail(alertId, alertData) {
     const sentAmpm = sentHour12 >= 12 ? 'PM' : 'AM';
     const sentDisplayHour = sentHour12 % 12 || 12;
     const sentDate = `${sentMonth}/${sentDay}/${sentYear}, ${String(sentDisplayHour).padStart(2, '0')}:${sentMinutes}:${sentSeconds} ${sentAmpm}`;
-    const emailSubject = `[${type.toUpperCase()}] ${title}`;
+    const emailSubject = `[${displayAlertType}] ${title}`;
     const emailHtml = `
 <!DOCTYPE html>
 <html lang="en">
@@ -1104,7 +1138,7 @@ async function sendAlertEmail(alertId, alertData) {
                                     <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20" style="filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1));">
                                         <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path>
                                     </svg>
-                                    ${type.toUpperCase()} ALERT
+                                    ${displayAlertType} ALERT
                                 </div>
                                 <h1 class="header-title" style="margin: 0; font-size: 36px; font-weight: 800; margin-bottom: 14px; text-shadow: 0 4px 8px rgba(0,0,0,0.12); line-height: 1.3;">${title}</h1>
                                 <p class="header-subtitle" style="margin: 0; font-size: 16px; opacity: 0.95; font-weight: 600; letter-spacing: 0.6px; text-shadow: 0 2px 4px rgba(0,0,0,0.08);">Alert ID: ${alertId}</p>
@@ -1158,7 +1192,7 @@ async function sendAlertEmail(alertId, alertData) {
                                                                         </td>
                                                                         <td style="vertical-align: middle;">
                                                                             <div class="detail-label" style="font-size: 13px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">Severity Level</div>
-                                                                            <div class="detail-value" style="font-size: 18px; font-weight: 700; color: ${getAlertColor(type)};">${severity.toUpperCase()}</div>
+                                                                            <div class="detail-value" style="font-size: 18px; font-weight: 700; color: ${getAlertColor(type)};">${displaySeverity}</div>
                                                                         </td>
                                                                     </tr>
                                                                 </table>
