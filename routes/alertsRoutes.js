@@ -47,11 +47,17 @@ const sendWithBrevo = async (mailOptions) => {
     email: process.env.BREVO_FROM_EMAIL || process.env.EMAIL_USER,
     name: process.env.EMAIL_FROM_NAME || "SoteROS Emergency Management"
   };
-  sendSmtpEmail.to = mailOptions.to.split(',').map(email => ({ email: email.trim() }));
+  
+  // Use BCC for privacy - send to system email and BCC all recipients
+  sendSmtpEmail.to = [{ email: process.env.EMAIL_USER || process.env.BREVO_FROM_EMAIL }];
+  if (mailOptions.bcc && mailOptions.bcc.length > 0) {
+    sendSmtpEmail.bcc = mailOptions.bcc.map(email => ({ email: email.trim() }));
+  }
+  
   sendSmtpEmail.subject = mailOptions.subject;
   sendSmtpEmail.htmlContent = mailOptions.html;
 
-  console.log('📧 Sending alert via Brevo API...');
+  console.log('📧 Sending alert via Brevo API with BCC...');
   const result = await brevoApi.sendTransacEmail(sendSmtpEmail);
   console.log('✅ Alert sent via Brevo successfully');
   return { messageId: result.messageId };
@@ -64,13 +70,14 @@ const sendWithSendGrid = async (mailOptions) => {
   }
 
   const msg = {
-    to: mailOptions.to,
+    to: process.env.EMAIL_USER || process.env.SENDGRID_FROM_EMAIL, // Send to system email
     from: process.env.SENDGRID_FROM_EMAIL || process.env.EMAIL_USER,
     subject: mailOptions.subject,
     html: mailOptions.html,
+    bcc: mailOptions.bcc || [], // Use BCC for privacy
   };
 
-  console.log('📧 Sending alert via SendGrid API...');
+  console.log('📧 Sending alert via SendGrid API with BCC...');
   const result = await sgMail.send(msg);
   console.log('✅ Alert sent via SendGrid successfully');
   return { messageId: result[0].headers['x-message-id'] };
@@ -751,253 +758,519 @@ async function sendAlertEmail(alertId, alertData) {
     // Prepare email content with all alert information
     const createdDate = created_at ? new Date(created_at).toLocaleString() : new Date().toLocaleString();
     const sentDate = new Date().toLocaleString();
-    const emailSubject = `[${type.toUpperCase()}] ${title} - Created On: ${createdDate}, Sent on: ${sentDate}`;
+    const emailSubject = `[${type.toUpperCase()}] ${title}`;
     const emailHtml = `
-      <div style="font-family: 'Inter', 'Segoe UI', Arial, sans-serif; max-width: 650px; margin: 0 auto; background: #ffffff; border-radius: 24px; box-shadow: 0 8px 32px rgba(0,0,0,0.12); overflow: hidden;">
-        <div style="background: linear-gradient(135deg, ${getAlertColor(type)} 0%, ${getAlertColor(type)}ee 100%); color: white; padding: 42px 32px; text-align: center; position: relative;">
-          <div style="position: relative; z-index: 2;">
-            <div style="display: inline-flex; align-items: center; gap: 12px; background-color: rgba(255,255,255,0.22); backdrop-filter: blur(8px); padding: 12px 24px; border-radius: 32px; font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; margin-bottom: 24px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
-              <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20" style="filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1));">
-                <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path>
-              </svg>
-              ${type.toUpperCase()} ALERT
-            </div>
-            <h1 style="margin: 0; font-size: 36px; font-weight: 800; margin-bottom: 14px; text-shadow: 0 4px 8px rgba(0,0,0,0.12); line-height: 1.3;">${title}</h1>
-            <p style="margin: 0; font-size: 16px; opacity: 0.95; font-weight: 600; letter-spacing: 0.6px; text-shadow: 0 2px 4px rgba(0,0,0,0.08);">Alert ID: ${alertId}</p>
-          </div>
-          <div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: radial-gradient(circle at top right, rgba(255,255,255,0.12) 0%, transparent 60%); z-index: 1;"></div>
-        </div>
-        <div style="padding: 42px 32px; background-color: #f8fafc;">
-          <div style="background-color: white; border-radius: 18px; padding: 32px; margin-bottom: 32px; border: 1px solid #e5e7eb; box-shadow: 0 4px 16px rgba(0,0,0,0.06); transition: all 0.3s ease;">
-            <h2 style="color: #1f2937; margin-top: 0; font-size: 24px; font-weight: 700; margin-bottom: 18px; display: flex; align-items: center; gap: 12px;">
-              <svg width="24" height="24" fill="currentColor" viewBox="0 0 20 20" style="color: ${getAlertColor(type)};">
-                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"></path>
-              </svg>
-              Alert Message
-            </h2>
-            <p style="color: #374151; line-height: 1.8; font-size: 18px; margin: 0; padding: 16px 20px; background-color: #f9fafb; border-radius: 12px; border-left: 4px solid ${getAlertColor(type)};">${message}</p>
-          </div>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>${title} - Emergency Alert</title>
+    <!--[if mso]>
+    <style type="text/css">
+        table {border-collapse: collapse; mso-table-lspace: 0pt; mso-table-rspace: 0pt;}
+        .mobile-hidden {display: none !important;}
+    </style>
+    <![endif]-->
+    <style type="text/css">
+        /* Reset styles */
+        body, table, td, p, a, li, blockquote {
+            -webkit-text-size-adjust: 100%;
+            -ms-text-size-adjust: 100%;
+        }
+        table, td {
+            mso-table-lspace: 0pt;
+            mso-table-rspace: 0pt;
+        }
+        img {
+            -ms-interpolation-mode: bicubic;
+            border: 0;
+            outline: none;
+            text-decoration: none;
+        }
+        
+        /* Mobile styles */
+        @media only screen and (max-width: 600px) {
+            .email-container {
+                width: 100% !important;
+                max-width: 100% !important;
+                margin: 0 !important;
+                padding: 0 !important;
+            }
+            .email-wrapper {
+                width: 100% !important;
+                padding: 0 !important;
+                border-radius: 0 !important;
+            }
+            .header-section {
+                padding: 24px 20px !important;
+            }
+            .header-badge {
+                font-size: 11px !important;
+                padding: 10px 18px !important;
+                margin-bottom: 16px !important;
+            }
+            .header-title {
+                font-size: 24px !important;
+                margin-bottom: 10px !important;
+            }
+            .header-subtitle {
+                font-size: 14px !important;
+            }
+            .content-section {
+                padding: 24px 16px !important;
+            }
+            .content-card {
+                padding: 20px !important;
+                margin-bottom: 20px !important;
+                border-radius: 12px !important;
+            }
+            .card-title {
+                font-size: 18px !important;
+                margin-bottom: 12px !important;
+            }
+            .card-title svg {
+                width: 18px !important;
+                height: 18px !important;
+            }
+            .message-text {
+                font-size: 16px !important;
+                padding: 12px 16px !important;
+                line-height: 1.6 !important;
+            }
+            .detail-card {
+                padding: 16px !important;
+            }
+            .detail-card table[role="presentation"] {
+                width: 100% !important;
+            }
+            .detail-icon {
+                padding: 10px !important;
+                margin-right: 12px !important;
+            }
+            .detail-icon svg {
+                width: 20px !important;
+                height: 20px !important;
+            }
+            .detail-label {
+                font-size: 11px !important;
+            }
+            .detail-value {
+                font-size: 16px !important;
+            }
+            .location-header {
+                padding: 20px !important;
+                flex-direction: column !important;
+                align-items: flex-start !important;
+                gap: 12px !important;
+            }
+            .location-title {
+                font-size: 18px !important;
+            }
+            .location-text {
+                font-size: 14px !important;
+            }
+            .coordinate-box {
+                width: 100% !important;
+                max-width: 100% !important;
+                padding: 0 0 12px 0 !important;
+                display: block !important;
+            }
+            .coordinate-box table[role="presentation"] {
+                width: 100% !important;
+                max-width: 100% !important;
+            }
+            /* Force coordinate boxes to stack on mobile */
+            table.coordinates-table[role="presentation"] tr {
+                display: block !important;
+                width: 100% !important;
+            }
+            table.coordinates-table[role="presentation"] td {
+                display: block !important;
+                width: 100% !important;
+                padding: 0 0 12px 0 !important;
+            }
+            .map-container {
+                padding: 16px !important;
+            }
+            .map-image {
+                border-radius: 12px !important;
+            }
+            .map-overlay {
+                padding: 16px !important;
+                flex-direction: column !important;
+                gap: 12px !important;
+                align-items: flex-start !important;
+            }
+            .map-overlay-text {
+                font-size: 12px !important;
+                margin-bottom: 2px !important;
+            }
+            .map-overlay-subtext {
+                font-size: 11px !important;
+            }
+            .map-button {
+                padding: 10px 20px !important;
+                font-size: 14px !important;
+                width: 100% !important;
+                justify-content: center !important;
+            }
+            .recipients-grid {
+                grid-template-columns: 1fr !important;
+                gap: 12px !important;
+            }
+            .recipient-card {
+                padding: 12px !important;
+            }
+            .action-section {
+                padding: 24px 20px !important;
+                border-radius: 12px !important;
+                margin-bottom: 20px !important;
+            }
+            .action-badge {
+                font-size: 11px !important;
+                padding: 10px 18px !important;
+                margin-bottom: 16px !important;
+            }
+            .action-title {
+                font-size: 18px !important;
+                margin-bottom: 12px !important;
+            }
+            .action-text {
+                font-size: 14px !important;
+                margin-bottom: 16px !important;
+            }
+            .action-time {
+                font-size: 12px !important;
+            }
+            .footer-section {
+                padding: 24px 20px !important;
+            }
+            .footer-logo {
+                width: 40px !important;
+                height: 40px !important;
+                margin-bottom: 12px !important;
+            }
+            .footer-title {
+                font-size: 18px !important;
+                margin-bottom: 6px !important;
+            }
+            .footer-subtitle {
+                font-size: 14px !important;
+            }
+        }
+        
+        /* Desktop styles */
+        @media only screen and (min-width: 601px) {
+            .mobile-hidden {
+                display: block !important;
+            }
+        }
+    </style>
+</head>
+<body style="margin: 0; padding: 0; background-color: #f3f4f6; font-family: 'Inter', 'Segoe UI', Arial, sans-serif;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f3f4f6;">
+        <tr>
+            <td align="center" style="padding: 20px 0;">
+                <table role="presentation" class="email-container" cellspacing="0" cellpadding="0" border="0" width="650" style="max-width: 650px; background-color: #ffffff; border-radius: 24px; box-shadow: 0 8px 32px rgba(0,0,0,0.12); overflow: hidden;">
+                    <!-- Header -->
+                    <tr>
+                        <td class="header-section" style="background: linear-gradient(135deg, ${getAlertColor(type)} 0%, ${getAlertColor(type)}ee 100%); color: white; padding: 42px 32px; text-align: center; position: relative;">
+                            <div style="position: relative; z-index: 2;">
+                                <div class="header-badge" style="display: inline-flex; align-items: center; gap: 12px; background-color: rgba(255,255,255,0.22); backdrop-filter: blur(8px); padding: 12px 24px; border-radius: 32px; font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; margin-bottom: 24px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
+                                    <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20" style="filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1));">
+                                        <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path>
+                                    </svg>
+                                    ${type.toUpperCase()} ALERT
+                                </div>
+                                <h1 class="header-title" style="margin: 0; font-size: 36px; font-weight: 800; margin-bottom: 14px; text-shadow: 0 4px 8px rgba(0,0,0,0.12); line-height: 1.3;">${title}</h1>
+                                <p class="header-subtitle" style="margin: 0; font-size: 16px; opacity: 0.95; font-weight: 600; letter-spacing: 0.6px; text-shadow: 0 2px 4px rgba(0,0,0,0.08);">Alert ID: ${alertId}</p>
+                            </div>
+                            <div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: radial-gradient(circle at top right, rgba(255,255,255,0.12) 0%, transparent 60%); z-index: 1;"></div>
+                        </td>
+                    </tr>
+                    
+                    <!-- Content -->
+                    <tr>
+                        <td class="content-section" style="padding: 42px 32px; background-color: #f8fafc;">
+                            <!-- Alert Message -->
+                            <table role="presentation" class="content-card" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: white; border-radius: 18px; padding: 32px; margin-bottom: 32px; border: 1px solid #e5e7eb; box-shadow: 0 4px 16px rgba(0,0,0,0.06);">
+                                <tr>
+                                    <td>
+                                        <h2 class="card-title" style="color: #1f2937; margin-top: 0; font-size: 24px; font-weight: 700; margin-bottom: 18px; display: flex; align-items: center; gap: 12px;">
+                                            <svg width="24" height="24" fill="currentColor" viewBox="0 0 20 20" style="color: ${getAlertColor(type)};">
+                                                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"></path>
+                                            </svg>
+                                            Alert Message
+                                        </h2>
+                                        <p class="message-text" style="color: #374151; line-height: 1.8; font-size: 18px; margin: 0; padding: 16px 20px; background-color: #f9fafb; border-radius: 12px; border-left: 4px solid ${getAlertColor(type)};">${message}</p>
+                                    </td>
+                                </tr>
+                            </table>
 
-          <!-- Alert Details Section -->
-          <div style="background-color: white; border-radius: 18px; padding: 32px; margin-bottom: 32px; border: 1px solid #e5e7eb; box-shadow: 0 4px 16px rgba(0,0,0,0.06);">
-            <h3 style="margin: 0 0 24px 0; color: #1f2937; font-size: 24px; font-weight: 700; display: flex; align-items: center; gap: 12px;">
-              <svg width="24" height="24" fill="currentColor" viewBox="0 0 20 20" style="color: ${getAlertColor(type)};">
-                <path fill-rule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clip-rule="evenodd"></path>
-              </svg>
-              Alert Details
-            </h3>
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; margin-bottom: 24px;">
-              <div style="display: flex; align-items: center; padding: 20px; background-color: white; border-radius: 16px; border: 1px solid #e5e7eb; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
-                <div style="background-color: ${getAlertColor(type)}15; padding: 12px; border-radius: 12px; margin-right: 16px;">
-                  <svg width="24" height="24" fill="${getAlertColor(type)}" viewBox="0 0 20 20">
-                    <path d="M3.807 2.342a1 1 0 010 1.414l-1.06 1.06a1 1 0 11-1.414-1.414l1.06-1.06a1 1 0 011.414 0zm12.728 0a1 1 0 011.414 0l1.06 1.06a1 1 0 11-1.414 1.414l-1.06-1.06a1 1 0 010-1.414zM10 2a1 1 0 011 1v1.586l4.707 4.707a1 1 0 01-1.414 1.414L10 6.414l-4.293 4.293a1 1 0 01-1.414-1.414L9 4.586V3a1 1 0 011-1z"/>
-                  </svg>
-                </div>
-                <div>
-                  <div style="font-size: 13px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">Severity Level</div>
-                  <div style="font-size: 18px; font-weight: 700; color: ${getAlertColor(type)};">${severity.toUpperCase()}</div>
-                </div>
-              </div>
-              
-              <div style="display: flex; align-items: center; padding: 20px; background-color: white; border-radius: 16px; border: 1px solid #e5e7eb; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
-                <div style="background-color: ${getAlertColor(type)}15; padding: 12px; border-radius: 12px; margin-right: 16px;">
-                  <svg width="24" height="24" fill="${getAlertColor(type)}" viewBox="0 0 20 20">
-                    <path d="M5 4a1 1 0 00-2 0v7.268a2 2 0 000 3.464V16a1 1 0 102 0v-1.268a2 2 0 000-3.464V4zM11 4a1 1 0 10-2 0v1.268a2 2 0 000 3.464V16a1 1 0 102 0V8.732a2 2 0 000-3.464V4zM16 3a1 1 0 011 1v7.268a2 2 0 010 3.464V16a1 1 0 11-2 0v-1.268a2 2 0 010-3.464V4a1 1 0 011-1z"/>
-                  </svg>
-                </div>
-                <div>
-                  <div style="font-size: 13px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">Priority</div>
-                  <div style="font-size: 18px; font-weight: 700; color: ${getAlertColor(type)};">${priority.toUpperCase()}</div>
-                </div>
-              </div>
+                            <!-- Alert Details -->
+                            <table role="presentation" class="content-card" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: white; border-radius: 18px; padding: 32px; margin-bottom: 32px; border: 1px solid #e5e7eb; box-shadow: 0 4px 16px rgba(0,0,0,0.06);">
+                                <tr>
+                                    <td>
+                                        <h3 class="card-title" style="margin: 0 0 24px 0; color: #1f2937; font-size: 24px; font-weight: 700; display: flex; align-items: center; gap: 12px;">
+                                            <svg width="24" height="24" fill="currentColor" viewBox="0 0 20 20" style="color: ${getAlertColor(type)};">
+                                                <path fill-rule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clip-rule="evenodd"></path>
+                                            </svg>
+                                            Alert Details
+                                        </h3>
+                                        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin-bottom: 24px;">
+                                            <tr>
+                                                <td style="padding-bottom: 16px;">
+                                                    <table role="presentation" class="detail-card" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: white; border-radius: 16px; border: 1px solid #e5e7eb; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+                                                        <tr>
+                                                            <td style="padding: 20px;">
+                                                                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                                                    <tr>
+                                                                        <td width="56" style="vertical-align: middle; padding-right: 16px;">
+                                                                            <div class="detail-icon" style="background-color: ${getAlertColor(type)}15; padding: 12px; border-radius: 12px; width: 48px; height: 48px; text-align: center;">
+                                                                                <svg width="24" height="24" fill="${getAlertColor(type)}" viewBox="0 0 20 20" style="vertical-align: middle;">
+                                                                                    <path d="M3.807 2.342a1 1 0 010 1.414l-1.06 1.06a1 1 0 11-1.414-1.414l1.06-1.06a1 1 0 011.414 0zm12.728 0a1 1 0 011.414 0l1.06 1.06a1 1 0 11-1.414 1.414l-1.06-1.06a1 1 0 010-1.414zM10 2a1 1 0 011 1v1.586l4.707 4.707a1 1 0 01-1.414 1.414L10 6.414l-4.293 4.293a1 1 0 01-1.414-1.414L9 4.586V3a1 1 0 011-1z"/>
+                                                                                </svg>
+                                                                            </div>
+                                                                        </td>
+                                                                        <td style="vertical-align: middle;">
+                                                                            <div class="detail-label" style="font-size: 13px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">Severity Level</div>
+                                                                            <div class="detail-value" style="font-size: 18px; font-weight: 700; color: ${getAlertColor(type)};">${severity.toUpperCase()}</div>
+                                                                        </td>
+                                                                    </tr>
+                                                                </table>
+                                                            </td>
+                                                        </tr>
+                                                    </table>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding-bottom: 16px;">
+                                                    <table role="presentation" class="detail-card" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: white; border-radius: 16px; border: 1px solid #e5e7eb; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+                                                        <tr>
+                                                            <td style="padding: 20px;">
+                                                                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                                                    <tr>
+                                                                        <td width="56" style="vertical-align: middle; padding-right: 16px;">
+                                                                            <div class="detail-icon" style="background-color: ${getAlertColor(type)}15; padding: 12px; border-radius: 12px; width: 48px; height: 48px; text-align: center;">
+                                                                                <svg width="24" height="24" fill="${getAlertColor(type)}" viewBox="0 0 20 20" style="vertical-align: middle;">
+                                                                                    <path d="M5 4a1 1 0 00-2 0v7.268a2 2 0 000 3.464V16a1 1 0 102 0v-1.268a2 2 0 000-3.464V4zM11 4a1 1 0 10-2 0v1.268a2 2 0 000 3.464V16a1 1 0 102 0V8.732a2 2 0 000-3.464V4zM16 3a1 1 0 011 1v7.268a2 2 0 010 3.464V16a1 1 0 11-2 0v-1.268a2 2 0 010-3.464V4a1 1 0 011-1z"/>
+                                                                                </svg>
+                                                                            </div>
+                                                                        </td>
+                                                                        <td style="vertical-align: middle;">
+                                                                            <div class="detail-label" style="font-size: 13px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">Priority</div>
+                                                                            <div class="detail-value" style="font-size: 18px; font-weight: 700; color: ${getAlertColor(type)};">${priority.toUpperCase()}</div>
+                                                                        </td>
+                                                                    </tr>
+                                                                </table>
+                                                            </td>
+                                                        </tr>
+                                                    </table>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td style="padding-bottom: 16px;">
+                                                    <table role="presentation" class="detail-card" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: white; border-radius: 16px; border: 1px solid #e5e7eb; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+                                                        <tr>
+                                                            <td style="padding: 20px;">
+                                                                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                                                    <tr>
+                                                                        <td width="56" style="vertical-align: middle; padding-right: 16px;">
+                                                                            <div class="detail-icon" style="background-color: ${getAlertColor(type)}15; padding: 12px; border-radius: 12px; width: 48px; height: 48px; text-align: center;">
+                                                                                <svg width="24" height="24" fill="${getAlertColor(type)}" viewBox="0 0 20 20" style="vertical-align: middle;">
+                                                                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                                                                                </svg>
+                                                                            </div>
+                                                                        </td>
+                                                                        <td style="vertical-align: middle;">
+                                                                            <div class="detail-label" style="font-size: 13px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">Status</div>
+                                                                            <div class="detail-value" style="font-size: 18px; font-weight: 700; color: ${getAlertColor(type)};">${status.toUpperCase()}</div>
+                                                                        </td>
+                                                                    </tr>
+                                                                </table>
+                                                            </td>
+                                                        </tr>
+                                                    </table>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td>
+                                                    <table role="presentation" class="detail-card" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: white; border-radius: 16px; border: 1px solid #e5e7eb; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+                                                        <tr>
+                                                            <td style="padding: 20px;">
+                                                                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                                                    <tr>
+                                                                        <td width="56" style="vertical-align: middle; padding-right: 16px;">
+                                                                            <div class="detail-icon" style="background-color: ${getAlertColor(type)}15; padding: 12px; border-radius: 12px; width: 48px; height: 48px; text-align: center;">
+                                                                                <svg width="24" height="24" fill="${getAlertColor(type)}" viewBox="0 0 20 20" style="vertical-align: middle;">
+                                                                                    <path fill-rule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clip-rule="evenodd"/>
+                                                                                </svg>
+                                                                            </div>
+                                                                        </td>
+                                                                        <td style="vertical-align: middle;">
+                                                                            <div class="detail-label" style="font-size: 13px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">Created On</div>
+                                                                            <div class="detail-value" style="font-size: 18px; font-weight: 700; color: ${getAlertColor(type)};">${new Date(created_at).toLocaleString()}</div>
+                                                                        </td>
+                                                                    </tr>
+                                                                </table>
+                                                            </td>
+                                                        </tr>
+                                                    </table>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                        ${geocodedAddress || (latitude && longitude) ? `
+                                        <!-- Location Information -->
+                                        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin-top: 32px; background-color: white; border-radius: 20px; border: 1px solid #e5e7eb; box-shadow: 0 4px 16px rgba(0,0,0,0.06); overflow: hidden;">
+                                            <tr>
+                                                <td class="location-header" style="background: linear-gradient(135deg, ${getAlertColor(type)}11 0%, ${getAlertColor(type)}22 100%); padding: 24px; border-bottom: 1px solid #e5e7eb;">
+                                                    <div style="display: flex; align-items: center; gap: 16px;">
+                                                        <div style="background-color: ${getAlertColor(type)}22; padding: 12px; border-radius: 12px;">
+                                                            <svg width="28" height="28" fill="${getAlertColor(type)}" viewBox="0 0 20 20">
+                                                                <path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd"></path>
+                                                            </svg>
+                                                        </div>
+                                                        <div>
+                                                            <h4 class="location-title" style="margin: 0 0 4px 0; font-size: 20px; font-weight: 700; color: #1f2937;">Incident Location</h4>
+                                                            ${geocodedAddress ? `<p class="location-text" style="margin: 0; font-size: 15px; color: #6b7280;">${geocodedAddress}</p>` : ''}
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                            ${latitude && longitude ? `
+                                            <tr>
+                                                <td class="map-container" style="padding: 24px;">
+                                                    <table role="presentation" class="coordinates-table" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin-bottom: 20px;">
+                                                        <tr>
+                                                            <td width="${radius_km ? '33' : '50'}%" class="coordinate-box" style="padding: 0 8px 16px 0; vertical-align: top;">
+                                                                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="padding: 16px; background-color: #f9fafb; border-radius: 12px; border: 1px solid #e5e7eb;">
+                                                                    <tr>
+                                                                        <td>
+                                                                            <div style="font-size: 13px; font-weight: 600; color: #6b7280; margin-bottom: 4px;">Latitude</div>
+                                                                            <div style="font-size: 16px; font-weight: 700; color: #1f2937;">${parseFloat(latitude).toFixed(6)}</div>
+                                                                        </td>
+                                                                    </tr>
+                                                                </table>
+                                                            </td>
+                                                            <td width="${radius_km ? '33' : '50'}%" class="coordinate-box" style="padding: 0 ${radius_km ? '8px' : '0'} 16px ${radius_km ? '8px' : '8px'}; vertical-align: top;">
+                                                                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="padding: 16px; background-color: #f9fafb; border-radius: 12px; border: 1px solid #e5e7eb;">
+                                                                    <tr>
+                                                                        <td>
+                                                                            <div style="font-size: 13px; font-weight: 600; color: #6b7280; margin-bottom: 4px;">Longitude</div>
+                                                                            <div style="font-size: 16px; font-weight: 700; color: #1f2937;">${parseFloat(longitude).toFixed(6)}</div>
+                                                                        </td>
+                                                                    </tr>
+                                                                </table>
+                                                            </td>
+                                                            ${radius_km ? `
+                                                            <td width="34%" class="coordinate-box" style="padding: 0 0 16px 8px; vertical-align: top;">
+                                                                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="padding: 16px; background-color: #f9fafb; border-radius: 12px; border: 1px solid #e5e7eb;">
+                                                                    <tr>
+                                                                        <td>
+                                                                            <div style="font-size: 13px; font-weight: 600; color: #6b7280; margin-bottom: 4px;">Affected Radius</div>
+                                                                            <div style="font-size: 16px; font-weight: 700; color: #1f2937;">${radius_km} km</div>
+                                                                        </td>
+                                                                    </tr>
+                                                                </table>
+                                                            </td>
+                                                            ` : ''}
+                                                        </tr>
+                                                    </table>
+                                                    <div style="position: relative; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.08);">
+                                                        <img src="https://maps.googleapis.com/maps/api/staticmap?center=${latitude},${longitude}&zoom=15&size=800x400&scale=2&markers=color:${getAlertColor(type).replace('#', '0x')}%7C${latitude},${longitude}&key=${process.env.GOOGLE_MAPS_API_KEY || ''}" 
+                                                            alt="Alert Location" 
+                                                            class="map-image"
+                                                            style="width: 100%; height: auto; display: block; max-width: 100%;">
+                                                        <div class="map-overlay" style="position: absolute; bottom: 0; left: 0; right: 0; padding: 20px; background: linear-gradient(to top, rgba(0,0,0,0.8), transparent); display: flex; justify-content: space-between; align-items: center;">
+                                                            <div style="color: white;">
+                                                                <div class="map-overlay-text" style="font-size: 14px; font-weight: 600; opacity: 0.9; margin-bottom: 4px;">View Full Map</div>
+                                                                <div class="map-overlay-subtext" style="font-size: 12px; opacity: 0.7;">Click to open in Google Maps</div>
+                                                            </div>
+                                                            <a href="https://www.google.com/maps?q=${latitude},${longitude}" 
+                                                                target="_blank"
+                                                                class="map-button"
+                                                                style="display: inline-flex; align-items: center; gap: 8px; padding: 12px 24px; background: white; color: ${getAlertColor(type)}; text-decoration: none; border-radius: 10px; font-size: 15px; font-weight: 600; transition: all 0.3s ease;">
+                                                                <svg width="18" height="18" fill="currentColor" viewBox="0 0 20 20">
+                                                                    <path d="M11 3a1 1 0 100 2h2.586l-6.293 6.293a1 1 0 101.414 1.414L15 6.414V9a1 1 0 102 0V4a1 1 0 00-1-1h-5z"></path>
+                                                                    <path d="M5 5a2 2 0 00-2 2v8a2 2 0 002 2h8a2 2 0 002-2v-3a1 1 0 10-2 0v3H5V7h3a1 1 0 000-2H5z"></path>
+                                                                </svg>
+                                                                Open Maps
+                                                            </a>
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                            ` : ''}
+                                        </table>
+                                        ` : ''}
+                                    </td>
+                                </tr>
+                            </table>
 
-              <div style="display: flex; align-items: center; padding: 20px; background-color: white; border-radius: 16px; border: 1px solid #e5e7eb; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
-                <div style="background-color: ${getAlertColor(type)}15; padding: 12px; border-radius: 12px; margin-right: 16px;">
-                  <svg width="24" height="24" fill="${getAlertColor(type)}" viewBox="0 0 20 20">
-                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
-                  </svg>
-                </div>
-                <div>
-                  <div style="font-size: 13px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">Status</div>
-                  <div style="font-size: 18px; font-weight: 700; color: ${getAlertColor(type)};">${status.toUpperCase()}</div>
-                </div>
-              </div>
-
-              <div style="display: flex; align-items: center; padding: 20px; background-color: white; border-radius: 16px; border: 1px solid #e5e7eb; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
-                <div style="background-color: ${getAlertColor(type)}15; padding: 12px; border-radius: 12px; margin-right: 16px;">
-                  <svg width="24" height="24" fill="${getAlertColor(type)}" viewBox="0 0 20 20">
-                    <path fill-rule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clip-rule="evenodd"/>
-                  </svg>
-                </div>
-                <div>
-                  <div style="font-size: 13px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">Created On</div>
-                  <div style="font-size: 18px; font-weight: 700; color: ${getAlertColor(type)};">${new Date(created_at).toLocaleString()}</div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Location Information -->
-            ${geocodedAddress || (latitude && longitude) ? `
-            <div style="margin-top: 32px; background-color: white; border-radius: 20px; border: 1px solid #e5e7eb; box-shadow: 0 4px 16px rgba(0,0,0,0.06); overflow: hidden;">
-              <!-- Location Header -->
-              <div style="background: linear-gradient(135deg, ${getAlertColor(type)}11 0%, ${getAlertColor(type)}22 100%); padding: 24px; border-bottom: 1px solid #e5e7eb;">
-                <div style="display: flex; align-items: center; gap: 16px;">
-                  <div style="background-color: ${getAlertColor(type)}22; padding: 12px; border-radius: 12px;">
-                    <svg width="28" height="28" fill="${getAlertColor(type)}" viewBox="0 0 20 20">
-                      <path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd"></path>
-                    </svg>
-                  </div>
-                  <div>
-                    <h4 style="margin: 0 0 4px 0; font-size: 20px; font-weight: 700; color: #1f2937;">Incident Location</h4>
-                    ${geocodedAddress ? `
-                    <p style="margin: 0; font-size: 15px; color: #6b7280;">${geocodedAddress}</p>
-                    ` : ''}
-                  </div>
-                </div>
-              </div>
-
-              ${latitude && longitude ? `
-              <!-- Map Container -->
-              <div style="padding: 24px;">
-                <!-- Coordinates Display -->
-                <div style="display: flex; gap: 16px; margin-bottom: 20px;">
-                  <div style="flex: 1; padding: 16px; background-color: #f9fafb; border-radius: 12px; border: 1px solid #e5e7eb;">
-                    <div style="font-size: 13px; font-weight: 600; color: #6b7280; margin-bottom: 4px;">Latitude</div>
-                    <div style="font-size: 16px; font-weight: 700; color: #1f2937;">${parseFloat(latitude).toFixed(6)}</div>
-                  </div>
-                  <div style="flex: 1; padding: 16px; background-color: #f9fafb; border-radius: 12px; border: 1px solid #e5e7eb;">
-                    <div style="font-size: 13px; font-weight: 600; color: #6b7280; margin-bottom: 4px;">Longitude</div>
-                    <div style="font-size: 16px; font-weight: 700; color: #1f2937;">${parseFloat(longitude).toFixed(6)}</div>
-                  </div>
-                  ${radius_km ? `
-                  <div style="flex: 1; padding: 16px; background-color: #f9fafb; border-radius: 12px; border: 1px solid #e5e7eb;">
-                    <div style="font-size: 13px; font-weight: 600; color: #6b7280; margin-bottom: 4px;">Affected Radius</div>
-                    <div style="font-size: 16px; font-weight: 700; color: #1f2937;">${radius_km} km</div>
-                  </div>
-                  ` : ''}
-                </div>
-
-                <!-- Map Image -->
-                <div style="position: relative; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.08);">
-                  <img src="https://maps.googleapis.com/maps/api/staticmap?center=${latitude},${longitude}&zoom=15&size=800x400&scale=2&markers=color:${getAlertColor(type).replace('#', '0x')}%7C${latitude},${longitude}&key=${process.env.GOOGLE_MAPS_API_KEY || ''}" 
-                    alt="Alert Location" 
-                    style="width: 100%; height: auto; display: block;">
-                  
-                  <!-- Map Overlay -->
-                  <div style="position: absolute; bottom: 0; left: 0; right: 0; padding: 20px; background: linear-gradient(to top, rgba(0,0,0,0.8), transparent); display: flex; justify-content: space-between; align-items: center;">
-                    <div style="color: white;">
-                      <div style="font-size: 14px; font-weight: 600; opacity: 0.9; margin-bottom: 4px;">View Full Map</div>
-                      <div style="font-size: 12px; opacity: 0.7;">Click to open in Google Maps</div>
-                    </div>
-                    <a href="https://www.google.com/maps?q=${latitude},${longitude}" 
-                      target="_blank"
-                      style="display: inline-flex; align-items: center; gap: 8px; padding: 12px 24px; background: white; color: ${getAlertColor(type)}; text-decoration: none; border-radius: 10px; font-size: 15px; font-weight: 600; transition: all 0.3s ease;">
-                      <svg width="18" height="18" fill="currentColor" viewBox="0 0 20 20">
-                        <path d="M11 3a1 1 0 100 2h2.586l-6.293 6.293a1 1 0 101.414 1.414L15 6.414V9a1 1 0 102 0V4a1 1 0 00-1-1h-5z"></path>
-                        <path d="M5 5a2 2 0 00-2 2v8a2 2 0 002 2h8a2 2 0 002-2v-3a1 1 0 10-2 0v3H5V7h3a1 1 0 000-2H5z"></path>
-                      </svg>
-                      Open Maps
-                    </a>
-                  </div>
-                </div>
-              </div>
-              ` : ''}
-            </div>
-            ` : ''}
-          </div>
-
-          <!-- Recipients Section -->
-          ${recipients && recipients.length > 0 ? `
-          <div style="background-color: white; border-radius: 20px; border: 1px solid #e5e7eb; box-shadow: 0 4px 16px rgba(0,0,0,0.06); overflow: hidden;">
-            <!-- Recipients Header -->
-            <div style="background: linear-gradient(135deg, ${getAlertColor(type)}11 0%, ${getAlertColor(type)}22 100%); padding: 24px; border-bottom: 1px solid #e5e7eb;">
-              <div style="display: flex; align-items: center; justify-content: space-between;">
-                <div style="display: flex; align-items: center; gap: 16px;">
-                  <div style="background-color: ${getAlertColor(type)}22; padding: 12px; border-radius: 12px;">
-                    <svg width="28" height="28" fill="${getAlertColor(type)}" viewBox="0 0 20 20">
-                      <path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z"></path>
-                      <path d="M18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z"></path>
-                    </svg>
-                  </div>
-                  <div>
-                    <h4 style="margin: 0 0 4px 0; font-size: 20px; font-weight: 700; color: #1f2937;">Alert Recipients</h4>
-                    <p style="margin: 0; font-size: 14px; color: #6b7280;">Total Recipients: ${recipients.length}</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Recipients List -->
-            <div style="padding: 24px;">
-              <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px;">
-                ${recipients.map((recipient, index) => `
-                  <div style="display: flex; align-items: center; padding: 16px; background-color: #f9fafb; border-radius: 12px; border: 1px solid #e5e7eb; gap: 12px;">
-                    <div style="background-color: ${getAlertColor(type)}15; padding: 10px; border-radius: 10px; flex-shrink: 0;">
-                      <svg width="20" height="20" fill="${getAlertColor(type)}" viewBox="0 0 20 20">
-                        <path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z"></path>
-                        <path d="M18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z"></path>
-                      </svg>
-                    </div>
-                    <div style="min-width: 0;">
-                      <div style="font-size: 15px; font-weight: 600; color: #1f2937; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${recipient}</div>
-                      <div style="font-size: 13px; color: #6b7280;">Recipient #${index + 1}</div>
-                    </div>
-                  </div>
-                `).join('')}
-              </div>
-            </div>
-          </div>
-          ` : ''}
-
-          <!-- Action Section -->
-          <div style="background: linear-gradient(135deg, ${getAlertColor(type)} 0%, ${getAlertColor(type)}ee 100%); color: white; padding: 36px; text-align: center; border-radius: 18px; margin-bottom: 32px; position: relative; overflow: hidden;">
-            <div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: radial-gradient(circle at top right, rgba(255,255,255,0.15) 0%, transparent 60%); z-index: 1;"></div>
-            <div style="position: relative; z-index: 2;">
-              <div style="display: inline-flex; align-items: center; gap: 12px; background-color: rgba(255,255,255,0.22); backdrop-filter: blur(8px); padding: 12px 24px; border-radius: 32px; margin-bottom: 24px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
-                <svg width="24" height="24" fill="currentColor" viewBox="0 0 20 20">
-                  <path fill-rule="evenodd" d="M2.166 4.999A11.954 11.954 0 0010 1.944 11.954 11.954 0 0017.834 5c.11.65.166 1.32.166 2.001 0 5.225-3.34 9.67-8 11.317C5.34 16.67 2 12.225 2 7c0-.682.057-1.35.166-2.001zm11.541 3.708a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
-                </svg>
-                <span style="font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px;">Official Emergency Alert</span>
-              </div>
-              <h3 style="margin: 0 0 16px 0; font-size: 24px; font-weight: 800; text-shadow: 0 2px 4px rgba(0,0,0,0.1);">SoteROS Emergency Management System</h3>
-              <p style="margin: 0 0 24px 0; font-size: 16px; opacity: 0.95; font-weight: 500; max-width: 500px; margin-left: auto; margin-right: auto; line-height: 1.6;">This is an official alert notification from the MDRRMO Rosario, Batangas Emergency Response Team.</p>
-              <div style="font-size: 14px; opacity: 0.9; font-weight: 500; display: flex; align-items: center; justify-content: center; gap: 8px;">
-                <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
-                  <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"></path>
-                </svg>
-                Sent on: ${new Date().toLocaleString()}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Footer -->
-        <div style="background: linear-gradient(135deg, #1f2937 0%, #111827 100%); color: #9ca3af; padding: 36px; text-align: center; border-bottom-left-radius: 24px; border-bottom-right-radius: 24px; position: relative; overflow: hidden;">
-          <div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: radial-gradient(circle at top right, rgba(255,255,255,0.08) 0%, transparent 60%); z-index: 1;"></div>
-          <div style="position: relative; z-index: 2; max-width: 440px; margin: 0 auto;">
-            <div style="margin-bottom: 24px;">
-              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin: 0 auto 16px; color: #f3f4f6;">
-                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path>
-              </svg>
-            </div>
-            <div style="font-size: 22px; font-weight: 800; color: #f3f4f6; margin-bottom: 8px; letter-spacing: 0.5px;">MDRRMO Rosario, Batangas</div>
-            <div style="opacity: 0.9; font-size: 16px; font-weight: 500; letter-spacing: 0.3px;">SoteROS Emergency Management System</div>
-          </div>
-        </div>
-      </div>
+                            <!-- Action Section -->
+                            <table role="presentation" class="action-section" cellspacing="0" cellpadding="0" border="0" width="100%" style="background: linear-gradient(135deg, ${getAlertColor(type)} 0%, ${getAlertColor(type)}ee 100%); color: white; padding: 36px; text-align: center; border-radius: 18px; margin-bottom: 32px; position: relative; overflow: hidden;">
+                                <tr>
+                                    <td style="position: relative; z-index: 2;">
+                                        <div class="action-badge" style="display: inline-flex; align-items: center; gap: 12px; background-color: rgba(255,255,255,0.22); backdrop-filter: blur(8px); padding: 12px 24px; border-radius: 32px; margin-bottom: 24px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
+                                            <svg width="24" height="24" fill="currentColor" viewBox="0 0 20 20">
+                                                <path fill-rule="evenodd" d="M2.166 4.999A11.954 11.954 0 0010 1.944 11.954 11.954 0 0017.834 5c.11.65.166 1.32.166 2.001 0 5.225-3.34 9.67-8 11.317C5.34 16.67 2 12.225 2 7c0-.682.057-1.35.166-2.001zm11.541 3.708a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
+                                            </svg>
+                                            <span style="font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px;">Official Emergency Alert</span>
+                                        </div>
+                                        <h3 class="action-title" style="margin: 0 0 16px 0; font-size: 24px; font-weight: 800; text-shadow: 0 2px 4px rgba(0,0,0,0.1);">SoteROS Emergency Management System</h3>
+                                        <p class="action-text" style="margin: 0 0 24px 0; font-size: 16px; opacity: 0.95; font-weight: 500; max-width: 500px; margin-left: auto; margin-right: auto; line-height: 1.6;">This is an official alert notification from the MDRRMO Rosario, Batangas Emergency Response Team.</p>
+                                        <div class="action-time" style="font-size: 14px; opacity: 0.9; font-weight: 500; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                                            <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
+                                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"></path>
+                                            </svg>
+                                            Sent on: ${new Date().toLocaleString()}
+                                        </div>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: radial-gradient(circle at top right, rgba(255,255,255,0.15) 0%, transparent 60%); z-index: 1;"></td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    
+                    <!-- Footer -->
+                    <tr>
+                        <td class="footer-section" style="background: linear-gradient(135deg, #1f2937 0%, #111827 100%); color: #9ca3af; padding: 36px; text-align: center; border-bottom-left-radius: 24px; border-bottom-right-radius: 24px; position: relative; overflow: hidden;">
+                            <div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: radial-gradient(circle at top right, rgba(255,255,255,0.08) 0%, transparent 60%); z-index: 1;"></div>
+                            <div style="position: relative; z-index: 2; max-width: 440px; margin: 0 auto;">
+                                <div style="margin-bottom: 24px;">
+                                    <svg class="footer-logo" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin: 0 auto 16px; color: #f3f4f6;">
+                                        <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path>
+                                    </svg>
+                                </div>
+                                <div class="footer-title" style="font-size: 22px; font-weight: 800; color: #f3f4f6; margin-bottom: 8px; letter-spacing: 0.5px;">MDRRMO Rosario, Batangas</div>
+                                <div class="footer-subtitle" style="opacity: 0.9; font-size: 16px; font-weight: 500; letter-spacing: 0.3px;">SoteROS Emergency Management System</div>
+                            </div>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>
     `;
     
-    // Send email to all recipients
+    // Send email using BCC for privacy - recipients won't see each other's emails
     const mailOptions = {
-      from: `${process.env.EMAIL_FROM_NAME} <${process.env.EMAIL_USER}>`,
-      to: emailAddresses.join(','),
+      from: `${process.env.EMAIL_FROM_NAME || 'SoteROS Emergency Management'} <${process.env.EMAIL_USER}>`,
+      to: process.env.EMAIL_USER, // Send to system email
+      bcc: emailAddresses, // All recipients in BCC for privacy
       subject: emailSubject,
       html: emailHtml
     };
 
-    console.log('📤 Sending email with options:', {
+    console.log('📤 Sending email with BCC to:', {
       from: mailOptions.from,
-      to: `${emailAddresses.length} recipients`,
+      bcc: `${emailAddresses.length} recipients (BCC - hidden)`,
       subject: mailOptions.subject
     });
 
