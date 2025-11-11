@@ -464,7 +464,7 @@ router.post('/:id/send', authenticateAdmin, async (req, res) => {
       longitude: alert.longitude,
       radius_km: alert.radius_km,
       location_text: alert.location_text,
-      created_at: alert.created_at_string || alert.created_at, // Use formatted string from database
+      created_at: alert.created_at_string || (alert.created_at ? String(alert.created_at) : null), // Use formatted string from database, ensure it's a string
       updated_at: alert.updated_at
     };
 
@@ -796,15 +796,20 @@ async function sendAlertEmail(alertId, alertData) {
     // Prepare email content with all alert information
     // Format date to display exactly as stored in database
     // MySQL returns dates as Date objects or strings - we need to extract the exact value
+    // Format date to display exactly as stored in database (created_at field)
+    // This function uses the exact date/time from database without any timezone conversion
     const formatDateForEmail = (dateValue) => {
       if (!dateValue) {
         return 'N/A';
       }
       
-      // If it's a Date object from MySQL, convert to string first
+      // Convert to string if it's a Date object (shouldn't happen if using created_at_string)
       let dateString = dateValue;
       if (dateValue instanceof Date) {
-        // MySQL Date object - format it as YYYY-MM-DD HH:MM:SS (same as database)
+        // This should not happen if we're using created_at_string from DATE_FORMAT
+        // But as fallback, convert Date to MySQL format string
+        // WARNING: This might have timezone issues, so we prefer using created_at_string
+        console.warn('⚠️ Received Date object instead of string, converting (may have timezone issues)');
         const year = dateValue.getFullYear();
         const month = String(dateValue.getMonth() + 1).padStart(2, '0');
         const day = String(dateValue.getDate()).padStart(2, '0');
@@ -812,10 +817,14 @@ async function sendAlertEmail(alertId, alertData) {
         const minutes = String(dateValue.getMinutes()).padStart(2, '0');
         const seconds = String(dateValue.getSeconds()).padStart(2, '0');
         dateString = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+      } else if (typeof dateValue !== 'string') {
+        // Convert to string if not already
+        dateString = String(dateValue);
       }
       
       // Parse MySQL datetime format: 'YYYY-MM-DD HH:MM:SS' or 'YYYY-MM-DD HH:MM:SS.mmm'
-      // Use the exact values from database, just reformat for display
+      // This format comes directly from DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s')
+      // Use the exact values from database - NO timezone conversion
       if (typeof dateString === 'string') {
         // Handle both with and without milliseconds
         const mysqlDateRegex = /^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})(\.\d+)?$/;
@@ -823,17 +832,18 @@ async function sendAlertEmail(alertId, alertData) {
         
         if (match) {
           const [, year, month, day, hour, minute, second] = match;
-          // Use exact hour, minute, second from database - no conversion
+          // Use exact hour, minute, second from database - NO conversion, NO timezone adjustment
+          // These are the exact values stored in the created_at field
           const hour24 = parseInt(hour, 10);
           const ampm = hour24 >= 12 ? 'PM' : 'AM';
           const displayHour = hour24 % 12 || 12;
           
           // Format as: MM/DD/YYYY, HH:MM:SS AM/PM
-          // This uses the exact same date/time values from database
+          // This displays the exact same date/time as stored in database created_at field
           return `${month}/${day}/${year}, ${String(displayHour).padStart(2, '0')}:${minute}:${second} ${ampm}`;
         }
         
-        // Try ISO format (YYYY-MM-DDTHH:MM:SS)
+        // Try ISO format (YYYY-MM-DDTHH:MM:SS) as fallback
         const isoRegex = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/;
         const isoMatch = dateString.match(isoRegex);
         if (isoMatch) {
@@ -846,7 +856,7 @@ async function sendAlertEmail(alertId, alertData) {
       }
       
       // Last resort: return as string
-      console.warn('⚠️ Date format not recognized:', dateValue);
+      console.warn('⚠️ Date format not recognized, returning as-is:', dateValue);
       return String(dateValue);
     };
     
@@ -1290,11 +1300,36 @@ async function sendAlertEmail(alertId, alertData) {
                                                             ` : ''}
                                                         </tr>
                                                     </table>
-                                                    <div style="position: relative; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.08);">
-                                                        <img src="https://maps.googleapis.com/maps/api/staticmap?center=${latitude},${longitude}&zoom=15&size=800x400&scale=2&markers=color:${getAlertColor(type).replace('#', '0x')}%7C${latitude},${longitude}&key=${process.env.GOOGLE_MAPS_API_KEY || ''}" 
-                                                            alt="Alert Location" 
+                                                    <div style="position: relative; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.08); background-color: #f3f4f6; min-height: 300px;">
+                                                        ${process.env.GOOGLE_MAPS_API_KEY ? `
+                                                        <img src="https://maps.googleapis.com/maps/api/staticmap?center=${latitude},${longitude}&zoom=15&size=800x400&scale=2&markers=color:${getAlertColor(type).replace('#', '0x')}%7C${latitude},${longitude}&key=${process.env.GOOGLE_MAPS_API_KEY}" 
+                                                            alt="Alert Location Map" 
                                                             class="map-image"
-                                                            style="width: 100%; height: auto; display: block; max-width: 100%;">
+                                                            style="width: 100%; height: auto; display: block; max-width: 100%;"
+                                                            onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                                                        ` : ''}
+                                                        <div style="display: ${process.env.GOOGLE_MAPS_API_KEY ? 'none' : 'flex'}; flex-direction: column; align-items: center; justify-content: center; padding: 60px 20px; text-align: center; background: linear-gradient(135deg, ${getAlertColor(type)}15 0%, ${getAlertColor(type)}08 100%); min-height: 300px;">
+                                                            <div style="background-color: ${getAlertColor(type)}22; padding: 20px; border-radius: 16px; margin-bottom: 20px;">
+                                                                <svg width="48" height="48" fill="${getAlertColor(type)}" viewBox="0 0 20 20">
+                                                                    <path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd"></path>
+                                                                </svg>
+                                                            </div>
+                                                            <h4 style="margin: 0 0 12px 0; font-size: 20px; font-weight: 700; color: #1f2937;">Location Coordinates</h4>
+                                                            <p style="margin: 0 0 20px 0; font-size: 16px; color: #6b7280; line-height: 1.6;">
+                                                                ${latitude}, ${longitude}
+                                                            </p>
+                                                            <a href="https://www.google.com/maps?q=${latitude},${longitude}" 
+                                                                target="_blank"
+                                                                class="map-button"
+                                                                style="display: inline-flex; align-items: center; gap: 8px; padding: 14px 28px; background: ${getAlertColor(type)}; color: white; text-decoration: none; border-radius: 12px; font-size: 16px; font-weight: 600; transition: all 0.3s ease; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
+                                                                <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
+                                                                    <path d="M11 3a1 1 0 100 2h2.586l-6.293 6.293a1 1 0 101.414 1.414L15 6.414V9a1 1 0 102 0V4a1 1 0 00-1-1h-5z"></path>
+                                                                    <path d="M5 5a2 2 0 00-2 2v8a2 2 0 002 2h8a2 2 0 002-2v-3a1 1 0 10-2 0v3H5V7h3a1 1 0 000-2H5z"></path>
+                                                                </svg>
+                                                                Open in Google Maps
+                                                            </a>
+                                                        </div>
+                                                        ${process.env.GOOGLE_MAPS_API_KEY ? `
                                                         <div class="map-overlay" style="position: absolute; bottom: 0; left: 0; right: 0; padding: 20px; background: linear-gradient(to top, rgba(0,0,0,0.8), transparent); display: flex; justify-content: space-between; align-items: center;">
                                                             <div style="color: white;">
                                                                 <div class="map-overlay-text" style="font-size: 14px; font-weight: 600; opacity: 0.9; margin-bottom: 4px;">View Full Map</div>
@@ -1311,6 +1346,7 @@ async function sendAlertEmail(alertId, alertData) {
                                                                 Open Maps
                                                             </a>
                                                         </div>
+                                                        ` : ''}
                                                     </div>
                                                 </td>
                                             </tr>
