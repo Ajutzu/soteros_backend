@@ -239,16 +239,17 @@ router.post('/', authenticateAdmin, async (req, res) => {
     const alertId = result.insertId;
     console.log('Created alert with ID:', alertId, 'with recipients:', recipients);
 
-    // Create notification for all users
+    // Create notification for specified recipients
     try {
       await NotificationService.createAlertNotification({
         id: alertId,
         title: title,
         description: fullDescription,
         alert_severity: alertSeverity,
-        alert_type: type
+        alert_type: type,
+        recipients: recipients || [] // Pass recipients to notification service
       });
-      console.log('Notification created for alert:', alertId);
+      console.log('Notification created for alert:', alertId, 'with recipients:', recipients || 'all users');
     } catch (notificationError) {
       console.error('Error creating notification for alert:', notificationError);
       // Don't fail the alert creation if notification fails
@@ -421,8 +422,11 @@ router.post('/:id/send', authenticateAdmin, async (req, res) => {
     console.log('🚨 Sending alert via email:', id);
 
     // Get alert details with full information
+    // Use DATE_FORMAT to get created_at as exact string from database (no timezone conversion)
     const [alerts] = await pool.execute(
-      'SELECT * FROM alerts WHERE id = ?',
+      `SELECT *, 
+       DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') as created_at_string
+       FROM alerts WHERE id = ?`,
       [id]
     );
 
@@ -460,7 +464,7 @@ router.post('/:id/send', authenticateAdmin, async (req, res) => {
       longitude: alert.longitude,
       radius_km: alert.radius_km,
       location_text: alert.location_text,
-      created_at: alert.created_at,
+      created_at: alert.created_at_string || alert.created_at, // Use formatted string from database
       updated_at: alert.updated_at
     };
 
@@ -623,13 +627,47 @@ async function sendAlertEmail(alertId, alertData) {
     console.log('📧 Processing email for alert:', { alertId, title, type, recipients });
 
     // Geocode location if coordinates provided but no location text
-    let geocodedAddress = location_text;
-    if (latitude && longitude && !location_text) {
-      try {
-        geocodedAddress = await reverseGeocode(latitude, longitude);
-      } catch (e) {
-        geocodedAddress = 'Unable to geocode location';
+    let geocodedAddress = null;
+    let locationDisplayText = '';
+    
+    console.log('📍 Location data:', { location_text, latitude, longitude });
+    
+    if (latitude && longitude) {
+      // If location_text is provided, use it
+      if (location_text && location_text.trim() !== '' && location_text.trim() !== 'null') {
+        locationDisplayText = location_text.trim();
+        console.log('📍 Using provided location_text:', locationDisplayText);
+      } else {
+        // Try to get location name from coordinates using reverse geocoding
+        console.log('📍 Attempting reverse geocoding for coordinates:', latitude, longitude);
+        try {
+          geocodedAddress = await reverseGeocode(latitude, longitude);
+          console.log('📍 Reverse geocoding result:', geocodedAddress);
+          
+          // If reverse geocoding succeeds and returns valid address
+          if (geocodedAddress && geocodedAddress.trim() !== '') {
+            locationDisplayText = geocodedAddress.trim();
+            console.log('✅ Using reverse geocoded address:', locationDisplayText);
+          } else {
+            // Fallback: show coordinates as location
+            locationDisplayText = `Coordinates: ${parseFloat(latitude).toFixed(6)}, ${parseFloat(longitude).toFixed(6)}`;
+            console.log('⚠️ Using coordinates as fallback:', locationDisplayText);
+          }
+        } catch (e) {
+          console.error('❌ Error reverse geocoding:', e);
+          // Fallback: show coordinates as location
+          locationDisplayText = `Coordinates: ${parseFloat(latitude).toFixed(6)}, ${parseFloat(longitude).toFixed(6)}`;
+          console.log('⚠️ Using coordinates as fallback after error:', locationDisplayText);
+        }
       }
+    } else if (location_text && location_text.trim() !== '' && location_text.trim() !== 'null') {
+      // Only location text, no coordinates
+      locationDisplayText = location_text.trim();
+      console.log('📍 Using location_text only:', locationDisplayText);
+    } else {
+      // No coordinates and no location text
+      locationDisplayText = null;
+      console.log('⚠️ No location data available');
     }
 
     // Get recipient email addresses based on recipient groups
@@ -756,8 +794,82 @@ async function sendAlertEmail(alertId, alertData) {
     }
 
     // Prepare email content with all alert information
-    const createdDate = created_at ? new Date(created_at).toLocaleString() : new Date().toLocaleString();
-    const sentDate = new Date().toLocaleString();
+    // Format date to display exactly as stored in database
+    // MySQL returns dates as Date objects or strings - we need to extract the exact value
+    const formatDateForEmail = (dateValue) => {
+      if (!dateValue) {
+        return 'N/A';
+      }
+      
+      // If it's a Date object from MySQL, convert to string first
+      let dateString = dateValue;
+      if (dateValue instanceof Date) {
+        // MySQL Date object - format it as YYYY-MM-DD HH:MM:SS (same as database)
+        const year = dateValue.getFullYear();
+        const month = String(dateValue.getMonth() + 1).padStart(2, '0');
+        const day = String(dateValue.getDate()).padStart(2, '0');
+        const hours = String(dateValue.getHours()).padStart(2, '0');
+        const minutes = String(dateValue.getMinutes()).padStart(2, '0');
+        const seconds = String(dateValue.getSeconds()).padStart(2, '0');
+        dateString = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+      }
+      
+      // Parse MySQL datetime format: 'YYYY-MM-DD HH:MM:SS' or 'YYYY-MM-DD HH:MM:SS.mmm'
+      // Use the exact values from database, just reformat for display
+      if (typeof dateString === 'string') {
+        // Handle both with and without milliseconds
+        const mysqlDateRegex = /^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})(\.\d+)?$/;
+        const match = dateString.match(mysqlDateRegex);
+        
+        if (match) {
+          const [, year, month, day, hour, minute, second] = match;
+          // Use exact hour, minute, second from database - no conversion
+          const hour24 = parseInt(hour, 10);
+          const ampm = hour24 >= 12 ? 'PM' : 'AM';
+          const displayHour = hour24 % 12 || 12;
+          
+          // Format as: MM/DD/YYYY, HH:MM:SS AM/PM
+          // This uses the exact same date/time values from database
+          return `${month}/${day}/${year}, ${String(displayHour).padStart(2, '0')}:${minute}:${second} ${ampm}`;
+        }
+        
+        // Try ISO format (YYYY-MM-DDTHH:MM:SS)
+        const isoRegex = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/;
+        const isoMatch = dateString.match(isoRegex);
+        if (isoMatch) {
+          const [, year, month, day, hour, minute, second] = isoMatch;
+          const hour24 = parseInt(hour, 10);
+          const ampm = hour24 >= 12 ? 'PM' : 'AM';
+          const displayHour = hour24 % 12 || 12;
+          return `${month}/${day}/${year}, ${String(displayHour).padStart(2, '0')}:${minute}:${second} ${ampm}`;
+        }
+      }
+      
+      // Last resort: return as string
+      console.warn('⚠️ Date format not recognized:', dateValue);
+      return String(dateValue);
+    };
+    
+    // Log the raw created_at value for debugging
+    console.log('📅 Raw created_at from database:', created_at);
+    console.log('📅 Type of created_at:', typeof created_at);
+    console.log('📅 created_at value:', JSON.stringify(created_at));
+    
+    const createdDateFormatted = formatDateForEmail(created_at);
+    console.log('📅 Formatted created_at for email:', createdDateFormatted);
+    
+    // Format current date for "Sent on" timestamp (use server's current time)
+    const now = new Date();
+    const sentYear = now.getFullYear();
+    const sentMonth = String(now.getMonth() + 1).padStart(2, '0');
+    const sentDay = String(now.getDate()).padStart(2, '0');
+    const sentHours = String(now.getHours()).padStart(2, '0');
+    const sentMinutes = String(now.getMinutes()).padStart(2, '0');
+    const sentSeconds = String(now.getSeconds()).padStart(2, '0');
+    const sentHour12 = parseInt(sentHours, 10);
+    const sentAmpm = sentHour12 >= 12 ? 'PM' : 'AM';
+    const sentDisplayHour = sentHour12 % 12 || 12;
+    const sentDate = `${sentMonth}/${sentDay}/${sentYear}, ${String(sentDisplayHour).padStart(2, '0')}:${sentMinutes}:${sentSeconds} ${sentAmpm}`;
     const emailSubject = `[${type.toUpperCase()}] ${title}`;
     const emailHtml = `
 <!DOCTYPE html>
@@ -1111,7 +1223,7 @@ async function sendAlertEmail(alertId, alertData) {
                                                                         </td>
                                                                         <td style="vertical-align: middle;">
                                                                             <div class="detail-label" style="font-size: 13px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">Created On</div>
-                                                                            <div class="detail-value" style="font-size: 18px; font-weight: 700; color: ${getAlertColor(type)};">${new Date(created_at).toLocaleString()}</div>
+                                                                            <div class="detail-value" style="font-size: 18px; font-weight: 700; color: ${getAlertColor(type)};">${createdDateFormatted}</div>
                                                                         </td>
                                                                     </tr>
                                                                 </table>
@@ -1121,7 +1233,7 @@ async function sendAlertEmail(alertId, alertData) {
                                                 </td>
                                             </tr>
                                         </table>
-                                        ${geocodedAddress || (latitude && longitude) ? `
+                                        ${locationDisplayText && locationDisplayText !== 'Location not specified' && locationDisplayText !== null ? `
                                         <!-- Location Information -->
                                         <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin-top: 32px; background-color: white; border-radius: 20px; border: 1px solid #e5e7eb; box-shadow: 0 4px 16px rgba(0,0,0,0.06); overflow: hidden;">
                                             <tr>
@@ -1134,7 +1246,7 @@ async function sendAlertEmail(alertId, alertData) {
                                                         </div>
                                                         <div>
                                                             <h4 class="location-title" style="margin: 0 0 4px 0; font-size: 20px; font-weight: 700; color: #1f2937;">Incident Location</h4>
-                                                            ${geocodedAddress ? `<p class="location-text" style="margin: 0; font-size: 15px; color: #6b7280;">${geocodedAddress}</p>` : ''}
+                                                            <p class="location-text" style="margin: 0; font-size: 15px; color: #6b7280; font-weight: 500;">${locationDisplayText}</p>
                                                         </div>
                                                     </div>
                                                 </td>
@@ -1225,7 +1337,7 @@ async function sendAlertEmail(alertId, alertData) {
                                             <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
                                                 <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"></path>
                                             </svg>
-                                            Sent on: ${new Date().toLocaleString()}
+                                            Sent on: ${sentDate}
                                         </div>
                                     </td>
                                 </tr>
@@ -1314,19 +1426,105 @@ function getAlertColor(type) {
 // Helper function for reverse geocoding
 async function reverseGeocode(lat, lng) {
   return new Promise((resolve, reject) => {
-    const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`;
-    https.get(url, (res) => {
-      let data = '';
-      res.on('data', (chunk) => data += chunk);
-      res.on('end', () => {
-        try {
-          const result = JSON.parse(data);
-          resolve(result.display_name || 'Unknown location');
-        } catch (e) {
-          resolve('Unknown location');
+    try {
+      // OpenStreetMap Nominatim requires a User-Agent header
+      const urlPath = `/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`;
+      
+      const options = {
+        hostname: 'nominatim.openstreetmap.org',
+        path: urlPath,
+        method: 'GET',
+        headers: {
+          'User-Agent': 'SoteROS-Emergency-Management/1.0 (MDRRMO Rosario Batangas)',
+          'Accept': 'application/json'
+        },
+        timeout: 5000
+      };
+      
+      const req = https.request(options, (res) => {
+        let data = '';
+        
+        // Check if request was successful
+        if (res.statusCode !== 200) {
+          console.error(`❌ Reverse geocoding failed with status: ${res.statusCode}`);
+          resolve(null);
+          return;
         }
+        
+        res.on('data', (chunk) => data += chunk);
+        res.on('end', () => {
+          try {
+            const result = JSON.parse(data);
+            
+            // Check if we got a valid response
+            if (result.error) {
+              console.error('❌ Reverse geocoding error:', result.error);
+              resolve(null);
+              return;
+            }
+            
+            // Try to get a readable address
+            if (result.display_name) {
+              // Clean up the address - remove redundant information
+              let address = result.display_name;
+              
+              // If address contains Philippines, try to format it better
+              if (address.includes('Philippines')) {
+                // Extract relevant parts (barangay, city, province)
+                const addressParts = result.address || {};
+                const parts = [];
+                
+                if (addressParts.road) parts.push(addressParts.road);
+                if (addressParts.village || addressParts.suburb) parts.push(addressParts.village || addressParts.suburb);
+                if (addressParts.city || addressParts.town) parts.push(addressParts.city || addressParts.town);
+                if (addressParts.state) parts.push(addressParts.state);
+                
+                if (parts.length > 0) {
+                  address = parts.join(', ');
+                }
+              }
+              
+              resolve(address);
+            } else if (result.address) {
+              // Fallback: construct address from address parts
+              const addr = result.address;
+              const parts = [];
+              
+              if (addr.road) parts.push(addr.road);
+              if (addr.village || addr.suburb) parts.push(addr.village || addr.suburb);
+              if (addr.city || addr.town) parts.push(addr.city || addr.town);
+              if (addr.state) parts.push(addr.state);
+              if (addr.country && !addr.country.includes('Philippines')) parts.push(addr.country);
+              
+              resolve(parts.length > 0 ? parts.join(', ') : null);
+            } else {
+              resolve(null);
+            }
+          } catch (e) {
+            console.error('❌ Error parsing reverse geocoding response:', e);
+            resolve(null);
+          }
+        });
       });
-    }).on('error', (e) => resolve('Unknown location'));
+      
+      req.on('error', (e) => {
+        console.error('❌ Reverse geocoding request error:', e.message);
+        resolve(null);
+      });
+      
+      req.on('timeout', () => {
+        console.error('❌ Reverse geocoding request timeout');
+        req.destroy();
+        resolve(null);
+      });
+      
+      req.setTimeout(5000);
+      req.end();
+      
+    } catch (e) {
+      console.error('❌ Error in reverseGeocode:', e);
+      resolve(null);
+    }
   });
 }
 

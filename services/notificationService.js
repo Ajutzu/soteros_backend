@@ -87,9 +87,9 @@ class NotificationService {
     }
   }
 
-  // Create alert notification
+  // Create alert notification for specific recipients
   static async createAlertNotification(alertData) {
-    const { id, title, description, alert_severity, alert_type } = alertData;
+    const { id, title, description, alert_severity, alert_type, recipients } = alertData;
     
     const severityMap = {
       'emergency': 'emergency',
@@ -97,13 +97,136 @@ class NotificationService {
       'info': 'info'
     };
 
-    return await this.createNotificationForAllUsers({
+    const notificationData = {
       type: 'alert',
       title: `🚨 ${title}`,
       message: description,
       severity: severityMap[alert_severity] || 'info',
       relatedId: id
-    });
+    };
+
+    // If recipients are specified, send only to those users
+    if (recipients && recipients.length > 0) {
+      try {
+        const userIds = await this.getUserIdsFromRecipients(recipients);
+        console.log(`📬 Creating alert notifications for ${userIds.length} users based on recipients:`, recipients);
+        
+        if (userIds.length === 0) {
+          console.warn('⚠️ No users found for specified recipients, notification not created');
+          return null;
+        }
+
+        // Create notification for each user
+        const notificationIds = [];
+        for (const userId of userIds) {
+          try {
+            const notifId = await this.createNotificationForUser(userId, notificationData);
+            if (notifId) notificationIds.push(notifId);
+          } catch (error) {
+            console.error(`Error creating notification for user ${userId}:`, error);
+          }
+        }
+        
+        console.log(`✅ Created ${notificationIds.length} alert notifications for recipients`);
+        return notificationIds;
+      } catch (error) {
+        console.error('Error creating notifications for recipients:', error);
+        // Fallback to all users if recipient processing fails
+        console.log('⚠️ Falling back to all users notification');
+        return await this.createNotificationForAllUsers(notificationData);
+      }
+    } else {
+      // No recipients specified, send to all users
+      console.log('📬 Creating alert notification for all users (no recipients specified)');
+      return await this.createNotificationForAllUsers(notificationData);
+    }
+  }
+
+  // Get user IDs based on recipient groups (similar to email recipient logic)
+  static async getUserIdsFromRecipients(recipients) {
+    const userIds = new Set(); // Use Set to avoid duplicates
+    
+    for (const recipient of recipients) {
+      try {
+        if (recipient === 'all_users') {
+          // Get all active user IDs from general_users table
+          const [users] = await db.execute('SELECT user_id FROM general_users WHERE status = 1');
+          users.forEach(user => userIds.add(user.user_id));
+        } else if (recipient === 'all_students') {
+          // Get all student user IDs
+          const [students] = await db.execute('SELECT user_id FROM general_users WHERE user_type = "STUDENT" AND status = 1');
+          students.forEach(user => userIds.add(user.user_id));
+        } else if (recipient === 'all_faculty') {
+          // Get all faculty user IDs
+          const [faculty] = await db.execute('SELECT user_id FROM general_users WHERE user_type = "FACULTY" AND status = 1');
+          faculty.forEach(user => userIds.add(user.user_id));
+        } else if (recipient === 'all_employees') {
+          // Get all university employee user IDs
+          const [employees] = await db.execute('SELECT user_id FROM general_users WHERE user_type = "UNIVERSITY_EMPLOYEE" AND status = 1');
+          employees.forEach(user => userIds.add(user.user_id));
+        } else if (recipient === 'emergency_responders' || recipient === 'all_staff') {
+          // Get all available staff user IDs
+          const [staff] = await db.execute('SELECT staff_id as user_id FROM staff WHERE status = 1 AND availability = "available"');
+          staff.forEach(member => userIds.add(member.user_id));
+        } else if (recipient === 'all_admins') {
+          // Get all admin user IDs
+          const [admins] = await db.execute('SELECT admin_id as user_id FROM admin WHERE status = "active"');
+          admins.forEach(admin => userIds.add(admin.user_id));
+        } else if (recipient.startsWith('department_')) {
+          // Get users from specific department
+          const department = recipient.replace('department_', '').replace('_', ' ');
+          const [users] = await db.execute('SELECT user_id FROM general_users WHERE department = ? AND status = 1', [department]);
+          users.forEach(user => userIds.add(user.user_id));
+        } else if (recipient === 'nearby_users') {
+          // Handle nearby users - would need coordinates for this
+          // For now, skip as it requires geographic queries
+          console.log('⚠️ Nearby users recipient detected but not implemented for notifications');
+        } else {
+          // Check if recipient is a barangay name (from Rosario barangays)
+          const rosarioBarangays = [
+            'Alupay', 'Antipolo', 'Bagong Pook', 'Balibago', 'Barangay A', 'Barangay B', 'Barangay C', 'Barangay D', 'Barangay E',
+            'Bayawang', 'Baybayin', 'Bulihan', 'Cahigam', 'Calantas', 'Colongan', 'Itlugan', 'Leviste', 'Lumbangan',
+            'Maalas-as', 'Mabato', 'Mabunga', 'Macalamcam A', 'Macalamcam B', 'Malaya', 'Maligaya', 'Marilag',
+            'Masaya', 'Matamis', 'Mavalor', 'Mayuro', 'Namuco', 'Namunga', 'Nasi', 'Natu', 'Palakpak',
+            'Pinagsibaan', 'Putingkahoy', 'Quilib', 'Salao', 'San Carlos', 'San Ignacio', 'San Isidro',
+            'San Jose', 'San Roque', 'Santa Cruz', 'Timbugan', 'Tiquiwan', 'Tulos'
+          ];
+
+          if (rosarioBarangays.includes(recipient)) {
+            // Get users from the specific barangay based on their address
+            const [users] = await db.execute(`
+              SELECT user_id FROM general_users
+              WHERE (address LIKE ? OR city LIKE ? OR state LIKE ? OR zip_code LIKE ?)
+              AND status = 1
+            `, [
+              `%${recipient}%`,
+              `%${recipient}%`,
+              `%${recipient}%`,
+              `%${recipient}%`
+            ]);
+            users.forEach(user => userIds.add(user.user_id));
+          } else if (recipient.includes('@')) {
+            // If recipient is an email address, find user by email
+            const [users] = await db.execute('SELECT user_id FROM general_users WHERE email = ? AND status = 1', [recipient]);
+            users.forEach(user => userIds.add(user.user_id));
+            
+            // Also check staff table
+            const [staff] = await db.execute('SELECT staff_id as user_id FROM staff WHERE email = ? AND status = 1', [recipient]);
+            staff.forEach(member => userIds.add(member.user_id));
+            
+            // Also check admin table
+            const [admins] = await db.execute('SELECT admin_id as user_id FROM admin WHERE email = ? AND status = "active"', [recipient]);
+            admins.forEach(admin => userIds.add(admin.user_id));
+          } else {
+            console.log(`⚠️ Unknown recipient type for notifications: ${recipient}`);
+          }
+        }
+      } catch (error) {
+        console.error(`❌ Error processing recipient ${recipient} for notifications:`, error);
+      }
+    }
+
+    return Array.from(userIds);
   }
 
   // Create safety protocol notification
