@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { loginLimiter, passwordResetLimiter } = require('../middleware/rateLimiter');
-const { loginUser, loginAdmin, loginStaff, registerUser, forgotPassword, resetPassword, verifyOTP, logoutUser, logoutAdmin, logoutStaff } = require('../controllers/authController');
+const { loginUser, loginAdmin, loginStaff, registerUser, forgotPassword, resetPassword, verifyOTP, verifyEmail, logoutUser, logoutAdmin, logoutStaff } = require('../controllers/authController');
 
 // User login route with rate limiting
 router.post('/login/user', loginLimiter, loginUser);
@@ -19,6 +19,9 @@ router.post('/register', registerUser);
 router.post('/forgot-password', passwordResetLimiter, forgotPassword);
 router.post('/verify-otp', verifyOTP);
 router.post('/reset-password', resetPassword);
+
+// Email verification route
+router.post('/verify-email', verifyEmail);
 
 // Logout routes
 router.post('/logout/user', logoutUser);

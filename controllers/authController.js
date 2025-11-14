@@ -2,7 +2,7 @@
 const pool = require('../config/conn');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { sendPasswordResetOTP } = require('../services/emailService');
+const { sendPasswordResetOTP, sendEmailVerificationOTP } = require('../services/emailService');
 const { generateOTP, storeOTP, verifyOTP: verifyOTPFromStore, deleteOTP } = require('../utils/otpStore');
 const { checkAccountLockout, recordFailedAttempt, clearFailedAttempts, getClientIP } = require('../middleware/accountLockout');
 const { validatePasswordStrength, validateEmail } = require('../middleware/inputSanitizer');
@@ -45,21 +45,39 @@ const loginUser = async (req, res) => {
 
         // Check if user exists in general_users table
         const [users] = await pool.execute(
-            'SELECT * FROM general_users WHERE email = ? AND status = 1',
+            'SELECT * FROM general_users WHERE email = ?',
             [email]
         );
 
         if (users.length === 0) {
-            // Record failed attempt even if user doesn't exist (to prevent user enumeration)
+            // Record failed attempt
             await recordFailedAttempt(email, clientIP);
             return res.status(401).json({
                 success: false,
-                message: 'Invalid email or password',
-                remainingAttempts: lockoutStatus.remainingAttempts - 1
+                message: 'Invalid email or password'
             });
         }
 
         const user = users[0];
+
+        // Check if email is verified
+        if (user.status === 0) {
+            return res.status(403).json({
+                success: false,
+                message: 'Please verify your email address before logging in. Check your inbox for the verification code.',
+                requiresVerification: true
+            });
+        }
+
+        // Check if account is active (status = 1)
+        if (user.status !== 1) {
+            await recordFailedAttempt(email, clientIP);
+            return res.status(401).json({
+                success: false,
+                message: 'Account is inactive. Please contact support.',
+                remainingAttempts: lockoutStatus.remainingAttempts - 1
+            });
+        }
 
         // SECURITY: Reject plain text passwords - only accept bcrypt hashed passwords
         if (!user.password.startsWith('$2y$') && !user.password.startsWith('$2b$') && !user.password.startsWith('$2a$')) {
@@ -540,17 +558,34 @@ const registerUser = async (req, res) => {
         // Create complete address with state, city, and zip code
         const completeAddress = `${address}, Rosario, Batangas 4225`;
 
-        // Insert new user
+        // Insert new user with status=0 (unverified)
         const [result] = await pool.execute(
             `INSERT INTO general_users
             (first_name, last_name, email, phone, address, password, user_type, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0)`,
             [firstName, lastName, email, phoneNumber, completeAddress, hashedPassword, userType]
         );
 
+        // Generate and send verification OTP
+        const verificationOTP = generateOTP();
+        storeOTP(email.toLowerCase(), verificationOTP);
+
+        try {
+            await sendEmailVerificationOTP(email, verificationOTP, firstName);
+            console.log('✅ Email verification OTP sent to:', email);
+        } catch (emailError) {
+            console.error('❌ Failed to send verification email:', emailError.message);
+            // Delete the user if email sending fails
+            await pool.execute('DELETE FROM general_users WHERE user_id = ?', [result.insertId]);
+            return res.status(500).json({
+                success: false,
+                message: 'Failed to send verification email. Please try again.'
+            });
+        }
+
         // Get the created user (without password)
         const [newUser] = await pool.execute(
-            'SELECT user_id, first_name, last_name, email, phone, address, user_type, created_at FROM general_users WHERE user_id = ?',
+            'SELECT user_id, first_name, last_name, email, phone, address, user_type, status, created_at FROM general_users WHERE user_id = ?',
             [result.insertId]
         );
 
@@ -560,7 +595,7 @@ const registerUser = async (req, res) => {
             await pool.execute(`
                 INSERT INTO activity_logs (general_user_id, action, details, ip_address, created_at)
                 VALUES (?, 'user_register', ?, ?, NOW())
-            `, [result.insertId, `New user registered: ${email} (${firstName} ${lastName})`, clientIP]);
+            `, [result.insertId, `New user registered: ${email} (${firstName} ${lastName}) - Pending verification`, clientIP]);
             console.log('✅ Activity logged: user_register');
         } catch (logError) {
             console.error('❌ Failed to log user registration activity:', logError.message);
@@ -576,14 +611,16 @@ const registerUser = async (req, res) => {
             phoneNumber: newUser[0].phone,
             address: newUser[0].address,
             userType: newUser[0].user_type,
+            status: newUser[0].status,
             createdAt: newUser[0].created_at
         };
 
-        console.log('User registration successful:', email);
+        console.log('User registration successful (pending verification):', email);
         res.status(201).json({
             success: true,
-            message: 'User registered successfully',
-            user: mappedUser
+            message: 'Registration successful! Please check your email to verify your account.',
+            user: mappedUser,
+            requiresVerification: true
         });
 
     } catch (error) {
@@ -897,6 +934,86 @@ const verifyOTP = async (req, res) => {
     }
 };
 
+// Verify email and activate account
+const verifyEmail = async (req, res) => {
+    try {
+        const { email, otp } = req.body;
+
+        console.log('Email verification attempt for:', email);
+
+        if (!email || !otp) {
+            return res.status(400).json({
+                success: false,
+                message: 'Email and OTP are required'
+            });
+        }
+
+        // Verify OTP
+        const otpVerification = verifyOTPFromStore(email.toLowerCase(), otp, true);
+        if (!otpVerification.valid) {
+            return res.status(400).json({
+                success: false,
+                message: otpVerification.message
+            });
+        }
+
+        // Check if user exists and is unverified
+        const [users] = await pool.execute(
+            'SELECT user_id, email, status FROM general_users WHERE email = ?',
+            [email.toLowerCase()]
+        );
+
+        if (users.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+
+        const user = users[0];
+
+        // Check if already verified
+        if (user.status === 1) {
+            return res.status(400).json({
+                success: false,
+                message: 'Email is already verified'
+            });
+        }
+
+        // Activate the account (set status to 1)
+        await pool.execute(
+            'UPDATE general_users SET status = 1 WHERE user_id = ?',
+            [user.user_id]
+        );
+
+        // Log email verification activity
+        try {
+            const clientIP = getClientIP(req);
+            await pool.execute(`
+                INSERT INTO activity_logs (general_user_id, action, details, ip_address, created_at)
+                VALUES (?, 'email_verified', ?, ?, NOW())
+            `, [user.user_id, `Email verified: ${email}`, clientIP]);
+            console.log('✅ Activity logged: email_verified');
+        } catch (logError) {
+            console.error('❌ Failed to log email verification activity:', logError.message);
+            // Don't fail the main operation if logging fails
+        }
+
+        console.log('Email verification successful for:', email);
+        res.status(200).json({
+            success: true,
+            message: 'Email verified successfully! Your account is now active.'
+        });
+
+    } catch (error) {
+        console.error('Email verification error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Internal server error'
+        });
+    }
+};
+
 // Logout for general users
 const logoutUser = async (req, res) => {
     try {
@@ -1087,6 +1204,7 @@ module.exports = {
     registerUser,
     forgotPassword,
     verifyOTP,
+    verifyEmail,
     resetPassword,
     logoutUser,
     logoutAdmin,
