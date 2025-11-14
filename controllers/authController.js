@@ -60,7 +60,7 @@ const loginUser = async (req, res) => {
 
         const user = users[0];
 
-        // Check if email is verified
+        // Check if email is verified (status = 0 means unverified)
         if (user.status === 0) {
             return res.status(403).json({
                 success: false,
@@ -69,12 +69,21 @@ const loginUser = async (req, res) => {
             });
         }
 
-        // Check if account is active (status = 1)
+        // Check if account is active (status = 1 means active/verified)
         if (user.status !== 1) {
             await recordFailedAttempt(email, clientIP);
+            
+            // Provide specific message based on status
+            let message = 'Account is inactive. Please contact support.';
+            if (user.status === 2) {
+                message = 'Your account has been deactivated by an administrator. Please contact support.';
+            } else if (user.status === -1) {
+                message = 'Your account has been suspended. Please contact support.';
+            }
+            
             return res.status(401).json({
                 success: false,
-                message: 'Account is inactive. Please contact support.',
+                message: message,
                 remainingAttempts: lockoutStatus.remainingAttempts - 1
             });
         }

@@ -140,12 +140,24 @@ router.put('/:id/status', async (req, res) => {
     
     console.log('Updating user status:', { id, status });
     
-    // Validate status value (allow 0, 1, and -1)
+    // Validate status value (allow 0, 1, 2, and -1)
+    // status = 0: UNVERIFIED (cannot be set by admin - only by system)
+    // status = 1: ACTIVE
+    // status = 2: INACTIVE (admin deactivated verified user)
+    // status = -1: SUSPENDED
     const statusValue = parseInt(status);
-    if (statusValue !== 0 && statusValue !== 1 && statusValue !== -1) {
+    if (statusValue !== 0 && statusValue !== 1 && statusValue !== 2 && statusValue !== -1) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid status value. Must be 0 (inactive), 1 (active), or -1 (suspended)'
+        message: 'Invalid status value. Must be 1 (active), 2 (inactive), or -1 (suspended). Status 0 (unverified) cannot be set manually.'
+      });
+    }
+    
+    // Prevent admin from setting status to 0 (unverified) - this is only for new registrations
+    if (statusValue === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot set status to UNVERIFIED. This status is only for users who have not verified their email. Use INACTIVE (2) to deactivate a verified user.'
       });
     }
     
@@ -169,7 +181,8 @@ router.put('/:id/status', async (req, res) => {
     // Function to get status text
     const getStatusText = (status) => {
       if (status === 1) return 'ACTIVE';
-      if (status === 0) return 'INACTIVE';
+      if (status === 0) return 'UNVERIFIED';
+      if (status === 2) return 'INACTIVE';
       if (status === -1) return 'SUSPENDED';
       return 'UNKNOWN';
     };
