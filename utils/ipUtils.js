@@ -1,5 +1,5 @@
 /**
- * Utility functions for IP address handling and geolocation
+ * Utility functions for IP address handling
  */
 
 /**
@@ -10,11 +10,6 @@
  */
 function normalizeIP(ip) {
   if (!ip || ip === 'unknown') return 'unknown';
-  
-  // Skip localhost and private IP addresses for geolocation
-  if (ip === '::1' || ip === '127.0.0.1' || ip === 'localhost') {
-    return 'unknown';
-  }
   
   // Handle IPv6-mapped IPv4 addresses (::ffff:xxx.xxx.xxx.xxx)
   if (ip.startsWith('::ffff:')) {
@@ -34,28 +29,6 @@ function normalizeIP(ip) {
   }
   
   return ip;
-}
-
-/**
- * Check if IP is a private/local IP address
- * @param {string} ip - IP address
- * @returns {boolean} - True if IP is private/local
- */
-function isPrivateIP(ip) {
-  if (!ip || ip === 'unknown') return true;
-  
-  // Localhost
-  if (ip === '127.0.0.1' || ip === '::1' || ip === 'localhost') return true;
-  
-  // Private IPv4 ranges
-  const privateRanges = [
-    /^10\./,                    // 10.0.0.0/8
-    /^172\.(1[6-9]|2[0-9]|3[01])\./, // 172.16.0.0/12
-    /^192\.168\./,              // 192.168.0.0/16
-    /^169\.254\./,              // Link-local 169.254.0.0/16
-  ];
-  
-  return privateRanges.some(range => range.test(ip));
 }
 
 /**
@@ -122,117 +95,8 @@ function getClientIP(req, debug = false) {
   return extractedIP;
 }
 
-/**
- * Get physical address (geolocation) from IP address
- * Uses ip-api.com free service (no API key required, 45 requests/minute limit)
- * Returns location information for tracking false reports and spam
- * 
- * @param {string} ip - IP address to geolocate
- * @returns {Promise<Object>} - Geolocation data with physical address
- * @example
- * {
- *   success: true,
- *   ip: '8.8.8.8',
- *   city: 'Mountain View',
- *   region: 'California',
- *   country: 'United States',
- *   countryCode: 'US',
- *   zip: '94043',
- *   lat: 37.386,
- *   lon: -122.0838,
- *   isp: 'Google LLC',
- *   physicalAddress: 'Mountain View, California, United States'
- * }
- */
-async function getIPGeolocation(ip) {
-  try {
-    // Normalize IP first
-    const normalizedIP = normalizeIP(ip);
-    
-    // Skip geolocation for private/local IPs
-    if (isPrivateIP(normalizedIP) || normalizedIP === 'unknown') {
-      return {
-        success: false,
-        ip: normalizedIP,
-        physicalAddress: 'Local/Private IP',
-        error: 'Cannot geolocate private or local IP addresses'
-      };
-    }
-    
-    // Use ip-api.com free service (no API key required)
-    // Format: http://ip-api.com/json/{ip}?fields=status,message,country,countryCode,region,regionName,city,zip,lat,lon,timezone,isp,query
-    const url = `http://ip-api.com/json/${normalizedIP}?fields=status,message,country,countryCode,region,regionName,city,zip,lat,lon,timezone,isp,query`;
-    
-    // Create AbortController for timeout
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
-    
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'User-Agent': 'PROTEQ-MDRRMO/1.0'
-      },
-      signal: controller.signal
-    });
-    
-    clearTimeout(timeoutId);
-    
-    if (!response.ok) {
-      throw new Error(`Geolocation API returned status ${response.status}`);
-    }
-    
-    const data = await response.json();
-    
-    // Check if API returned an error
-    if (data.status === 'fail') {
-      return {
-        success: false,
-        ip: normalizedIP,
-        physicalAddress: 'Unknown',
-        error: data.message || 'Geolocation failed'
-      };
-    }
-    
-    // Build physical address string
-    const addressParts = [];
-    if (data.city) addressParts.push(data.city);
-    if (data.regionName) addressParts.push(data.regionName);
-    if (data.country) addressParts.push(data.country);
-    
-    const physicalAddress = addressParts.length > 0 
-      ? addressParts.join(', ')
-      : data.country || 'Unknown Location';
-    
-    return {
-      success: true,
-      ip: data.query || normalizedIP,
-      city: data.city || null,
-      region: data.regionName || data.region || null,
-      country: data.country || null,
-      countryCode: data.countryCode || null,
-      zip: data.zip || null,
-      lat: data.lat || null,
-      lon: data.lon || null,
-      timezone: data.timezone || null,
-      isp: data.isp || null,
-      physicalAddress: physicalAddress
-    };
-    
-  } catch (error) {
-    console.error('Error getting IP geolocation:', error.message);
-    return {
-      success: false,
-      ip: normalizeIP(ip),
-      physicalAddress: 'Unknown',
-      error: error.message || 'Geolocation request failed'
-    };
-  }
-}
-
 module.exports = {
   normalizeIP,
-  getClientIP,
-  getIPGeolocation,
-  isPrivateIP
+  getClientIP
 };
 

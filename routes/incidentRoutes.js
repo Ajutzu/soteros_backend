@@ -8,7 +8,7 @@ const AdminNotificationService = require('../services/adminNotificationService')
 const path = require('path');
 const fs = require('fs');
 const { uploadIncident } = require('../config/cloudinary');
-const { getClientIP, getIPGeolocation } = require('../utils/ipUtils');
+const { getClientIP } = require('../utils/ipUtils');
 
 // Submit incident report (authenticated users) - Using Cloudinary
 router.post('/report', authenticateUser, uploadIncident.array('attachments', 5), async (req, res) => {
@@ -173,32 +173,13 @@ router.post('/report', authenticateUser, uploadIncident.array('attachments', 5),
 
     console.log('Incident report saved with ID:', result.insertId);
 
-    // Log incident report submission with IP geolocation
+    // Log incident report submission
     try {
       const clientIP = getClientIP(req); // Use normalized IP utility
-      
-      // Get IP geolocation for tracking false reports and spam
-      let ipLocation = null;
-      try {
-        const geoData = await getIPGeolocation(clientIP);
-        if (geoData.success && geoData.physicalAddress) {
-          ipLocation = geoData.physicalAddress;
-          console.log(`🌍 [IP GEOLOCATION] IP ${clientIP} location: ${ipLocation}`);
-        }
-      } catch (geoError) {
-        console.warn('⚠️ Failed to get IP geolocation (non-critical):', geoError.message);
-      }
-      
-      // Build details with IP location if available
-      let detailsText = `Incident report submitted: ${incidentType} at ${location}`;
-      if (ipLocation) {
-        detailsText += ` | IP Location: ${ipLocation}`;
-      }
-      
       await pool.execute(`
         INSERT INTO activity_logs (general_user_id, action, details, ip_address, created_at)
         VALUES (?, 'incident_report_submit', ?, ?, NOW())
-      `, [req.user?.user_id || 1, detailsText, clientIP]);
+      `, [req.user?.user_id || 1, `Incident report submitted: ${incidentType} at ${location}`, clientIP]);
       console.log('✅ Activity logged: incident_report_submit');
     } catch (logError) {
       console.error('❌ Failed to log incident report activity:', logError.message);
@@ -549,33 +530,14 @@ router.post('/report-guest', uploadIncident.array('attachments', 5), async (req,
 
     console.log('📋 [GUEST INCIDENT] Guest information saved for incident:', incidentId);
 
-    // Log guest incident report submission with IP geolocation (non-critical operation)
+    // Log guest incident report submission (non-critical operation)
     try {
       const actualIP = getClientIP(req); // Use normalized IP utility (already handles splitting)
       console.log(`💾 [ACTIVITY LOG] Storing IP: ${actualIP} for guest incident report`);
-      
-      // Get IP geolocation for tracking false reports and spam
-      let ipLocation = null;
-      try {
-        const geoData = await getIPGeolocation(actualIP);
-        if (geoData.success && geoData.physicalAddress) {
-          ipLocation = geoData.physicalAddress;
-          console.log(`🌍 [IP GEOLOCATION] IP ${actualIP} location: ${ipLocation}`);
-        }
-      } catch (geoError) {
-        console.warn('⚠️ Failed to get IP geolocation (non-critical):', geoError.message);
-      }
-      
-      // Build details with IP location for tracking false reports/spam
-      let detailsText = `Guest incident report submitted: ${incidentType} at ${location} by ${guestName}`;
-      if (ipLocation) {
-        detailsText += ` | IP Location: ${ipLocation}`;
-      }
-      
       await pool.execute(`
         INSERT INTO activity_logs (general_user_id, action, details, ip_address, created_at)
         VALUES (NULL, 'guest_incident_report_submit', ?, ?, NOW())
-      `, [detailsText, actualIP]);
+      `, [`Guest incident report submitted: ${incidentType} at ${location} by ${guestName}`, actualIP]);
       console.log('✅ [GUEST INCIDENT] Activity logged: guest_incident_report_submit');
     } catch (logError) {
       console.error('⚠️ [GUEST INCIDENT] Failed to log guest incident report activity (non-critical):', logError.message);
