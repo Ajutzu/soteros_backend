@@ -531,14 +531,77 @@ const registerUser = async (req, res) => {
 
         // Check if user already exists
         const [existingUsers] = await pool.execute(
-            'SELECT user_id FROM general_users WHERE email = ?',
-            [email]
+            'SELECT user_id, status FROM general_users WHERE email = ?',
+            [email.toLowerCase()]
         );
 
         if (existingUsers.length > 0) {
-            return res.status(409).json({
-                success: false,
-                message: 'User with this email already exists'
+            const existingUser = existingUsers[0];
+            
+            // If user is already verified, reject registration
+            if (existingUser.status === 1) {
+                return res.status(409).json({
+                    success: false,
+                    message: 'User with this email already exists. Please log in instead.',
+                    accountExists: true,
+                    isVerified: true
+                });
+            }
+            
+            // If user is unverified, allow resending verification code
+            // Update the account with new information and resend verification
+            const saltRounds = 10;
+            const hashedPassword = await bcrypt.hash(password, saltRounds);
+            const completeAddress = `${address}, Rosario, Batangas 4225`;
+            
+            // Update existing unverified account
+            await pool.execute(
+                `UPDATE general_users 
+                SET first_name = ?, last_name = ?, phone = ?, address = ?, password = ?, user_type = ?, updated_at = NOW()
+                WHERE user_id = ?`,
+                [firstName, lastName, phoneNumber, completeAddress, hashedPassword, userType, existingUser.user_id]
+            );
+            
+            // Generate and send new verification OTP
+            const verificationOTP = generateOTP();
+            storeOTP(email.toLowerCase(), verificationOTP);
+            
+            try {
+                await sendEmailVerificationOTP(email, verificationOTP, firstName);
+                console.log('✅ Verification OTP resent to unverified account:', email);
+            } catch (emailError) {
+                console.error('❌ Failed to resend verification email:', emailError.message);
+                return res.status(500).json({
+                    success: false,
+                    message: 'Failed to send verification email. Please try again.'
+                });
+            }
+            
+            // Get the updated user
+            const [updatedUser] = await pool.execute(
+                'SELECT user_id, first_name, last_name, email, phone, address, user_type, status, created_at FROM general_users WHERE user_id = ?',
+                [existingUser.user_id]
+            );
+            
+            // Map database fields to camelCase for frontend
+            const mappedUser = {
+                userId: updatedUser[0].user_id,
+                firstName: updatedUser[0].first_name,
+                lastName: updatedUser[0].last_name,
+                email: updatedUser[0].email,
+                phoneNumber: updatedUser[0].phone,
+                address: updatedUser[0].address,
+                userType: updatedUser[0].user_type,
+                status: updatedUser[0].status,
+                createdAt: updatedUser[0].created_at
+            };
+            
+            return res.status(200).json({
+                success: true,
+                message: 'Account information updated. A new verification code has been sent to your email.',
+                user: mappedUser,
+                requiresVerification: true,
+                isResend: true
             });
         }
 
@@ -1014,6 +1077,93 @@ const verifyEmail = async (req, res) => {
     }
 };
 
+// Resend email verification code
+const resendVerificationCode = async (req, res) => {
+    try {
+        const { email } = req.body;
+
+        console.log('Resend verification code request for:', email);
+
+        if (!email) {
+            return res.status(400).json({
+                success: false,
+                message: 'Email is required'
+            });
+        }
+
+        // Validate email format
+        if (!validateEmail(email)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid email format'
+            });
+        }
+
+        // Check if user exists
+        const [users] = await pool.execute(
+            'SELECT user_id, email, status, first_name FROM general_users WHERE email = ?',
+            [email.toLowerCase()]
+        );
+
+        if (users.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found. Please sign up first.'
+            });
+        }
+
+        const user = users[0];
+
+        // Check if already verified
+        if (user.status === 1) {
+            return res.status(400).json({
+                success: false,
+                message: 'Email is already verified. You can log in now.'
+            });
+        }
+
+        // Generate and send new verification OTP
+        const verificationOTP = generateOTP();
+        storeOTP(email.toLowerCase(), verificationOTP);
+
+        try {
+            await sendEmailVerificationOTP(email, verificationOTP, user.first_name);
+            console.log('✅ Verification OTP resent to:', email);
+        } catch (emailError) {
+            console.error('❌ Failed to resend verification email:', emailError.message);
+            return res.status(500).json({
+                success: false,
+                message: 'Failed to send verification email. Please try again.'
+            });
+        }
+
+        // Log resend verification activity
+        try {
+            const clientIP = getClientIP(req);
+            await pool.execute(`
+                INSERT INTO activity_logs (general_user_id, action, details, ip_address, created_at)
+                VALUES (?, 'verification_code_resent', ?, ?, NOW())
+            `, [user.user_id, `Verification code resent to: ${email}`, clientIP]);
+            console.log('✅ Activity logged: verification_code_resent');
+        } catch (logError) {
+            console.error('❌ Failed to log resend verification activity:', logError.message);
+            // Don't fail the main operation if logging fails
+        }
+
+        res.status(200).json({
+            success: true,
+            message: 'Verification code has been sent to your email. Please check your inbox.'
+        });
+
+    } catch (error) {
+        console.error('Resend verification code error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Internal server error'
+        });
+    }
+};
+
 // Logout for general users
 const logoutUser = async (req, res) => {
     try {
@@ -1205,6 +1355,7 @@ module.exports = {
     forgotPassword,
     verifyOTP,
     verifyEmail,
+    resendVerificationCode,
     resetPassword,
     logoutUser,
     logoutAdmin,
