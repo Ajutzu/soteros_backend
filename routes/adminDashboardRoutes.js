@@ -38,7 +38,7 @@ router.get('/stats', async (req, res) => {
         COUNT(*) as total_incidents,
         SUM(CASE WHEN status = 'pending' OR status = 'in_progress' THEN 1 ELSE 0 END) as active_incidents,
         SUM(CASE WHEN priority_level = 'high' OR priority_level = 'critical' THEN 1 ELSE 0 END) as high_priority_incidents,
-        SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 ELSE 0 END) as incidents_this_week
+        SUM(CASE WHEN date_reported >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 ELSE 0 END) as incidents_this_week
       FROM incident_reports
     `);
 
@@ -55,24 +55,24 @@ router.get('/stats', async (req, res) => {
       SELECT
         'incident_report' as action,
         CONCAT('New incident: ', ir.incident_type) as details,
-        ir.created_at,
+        ir.date_reported as created_at,
         'user' as user_type,
         ir.reported_by as user_id,
         CONCAT(gu.first_name, ' ', gu.last_name) as reporter_name
       FROM incident_reports ir
       LEFT JOIN general_users gu ON ir.reported_by = gu.user_id
-      ORDER BY ir.created_at DESC
+      ORDER BY ir.date_reported DESC
       LIMIT 10
     `);
 
     // Get incident trends (last 7 days)
     const [incidentTrends] = await pool.execute(`
       SELECT
-        DATE(created_at) as date,
+        DATE(date_reported) as date,
         COUNT(*) as count
       FROM incident_reports
-      WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-      GROUP BY DATE(created_at)
+      WHERE date_reported >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+      GROUP BY DATE(date_reported)
       ORDER BY date ASC
     `);
 
@@ -182,11 +182,11 @@ router.get('/analytics', async (req, res) => {
     // Get incident trends for last 30 days
     const [incidentTrends30Days] = await pool.execute(`
       SELECT
-        DATE(created_at) as date,
+        DATE(date_reported) as date,
         COUNT(*) as count
       FROM incident_reports
-      WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-      GROUP BY DATE(created_at)
+      WHERE date_reported >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+      GROUP BY DATE(date_reported)
       ORDER BY date ASC
     `);
 
@@ -238,37 +238,37 @@ router.get('/analytics', async (req, res) => {
     // Get monthly incident summary for last 12 months
     const [monthlyIncidents] = await pool.execute(`
       SELECT
-        DATE_FORMAT(created_at, '%Y-%m') as month,
+        DATE_FORMAT(date_reported, '%Y-%m') as month,
         COUNT(*) as total_incidents,
         SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved_incidents,
         SUM(CASE WHEN priority_level = 'high' OR priority_level = 'critical' THEN 1 ELSE 0 END) as high_priority_incidents
       FROM incident_reports
-      WHERE created_at >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
-      GROUP BY DATE_FORMAT(created_at, '%Y-%m')
+      WHERE date_reported >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
+      GROUP BY DATE_FORMAT(date_reported, '%Y-%m')
       ORDER BY month ASC
     `);
 
     // Get peak hours analysis (incidents by hour of day) with consecutive dates and times
-    // Note: MIN/MAX should already match the hour bucket since we group by HOUR(created_at)
+    // Note: MIN/MAX should already match the hour bucket since we group by HOUR(date_reported)
     // If there's a mismatch, it's likely a timezone conversion issue in the frontend
     const [peakHoursData] = await pool.execute(`
       SELECT
-        HOUR(created_at) as hour,
+        HOUR(date_reported) as hour,
         COUNT(*) as incident_count,
-        MIN(created_at) as earliest_datetime,
-        MAX(created_at) as latest_datetime,
+        MIN(date_reported) as earliest_datetime,
+        MAX(date_reported) as latest_datetime,
         GROUP_CONCAT(
-          DISTINCT CONCAT(DATE(created_at), ' ', TIME_FORMAT(created_at, '%h:%i %p')) 
-          ORDER BY created_at DESC 
+          DISTINCT CONCAT(DATE(date_reported), ' ', TIME_FORMAT(date_reported, '%h:%i %p')) 
+          ORDER BY date_reported DESC 
           LIMIT 5
         ) as sample_datetimes,
         GROUP_CONCAT(
-          DISTINCT DATE(created_at) 
-          ORDER BY DATE(created_at) ASC
+          DISTINCT DATE(date_reported) 
+          ORDER BY DATE(date_reported) ASC
         ) as consecutive_dates
       FROM incident_reports
-      WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-      GROUP BY HOUR(created_at)
+      WHERE date_reported >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+      GROUP BY HOUR(date_reported)
       ORDER BY hour ASC
     `);
 
@@ -425,18 +425,18 @@ router.get('/monthly-trends', async (req, res) => {
     switch (period) {
       case 'days':
         dateFormat = '%Y-%m-%d';
-        groupBy = 'DATE(created_at)';
+        groupBy = 'DATE(date_reported)';
         dateFilter = `DATE_SUB(NOW(), INTERVAL ${Math.min(parseInt(limit), 30)} DAY)`;
         break;
       case 'weeks':
         dateFormat = '%Y-W%U';
-        groupBy = 'YEARWEEK(created_at, 1)';
+        groupBy = 'YEARWEEK(date_reported, 1)';
         dateFilter = `DATE_SUB(NOW(), INTERVAL ${Math.min(parseInt(limit), 52)} WEEK)`;
         break;
       case 'months':
       default:
         dateFormat = '%Y-%m';
-        groupBy = 'DATE_FORMAT(created_at, "%Y-%m")';
+        groupBy = 'DATE_FORMAT(date_reported, "%Y-%m")';
         dateFilter = `DATE_SUB(NOW(), INTERVAL ${Math.min(parseInt(limit), 24)} MONTH)`;
         break;
     }
@@ -448,7 +448,7 @@ router.get('/monthly-trends', async (req, res) => {
         SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved_incidents,
         SUM(CASE WHEN priority_level = 'high' OR priority_level = 'critical' THEN 1 ELSE 0 END) as high_priority_incidents
       FROM incident_reports
-      WHERE created_at >= ${dateFilter}
+      WHERE date_reported >= ${dateFilter}
       GROUP BY ${groupBy}
       ORDER BY ${groupBy} ASC
     `;
