@@ -6,6 +6,7 @@ const { sendPasswordResetOTP, sendEmailVerificationOTP } = require('../services/
 const { generateOTP, storeOTP, verifyOTP: verifyOTPFromStore, deleteOTP } = require('../utils/otpStore');
 const { checkAccountLockout, recordFailedAttempt, clearFailedAttempts, getClientIP } = require('../middleware/accountLockout');
 const { validatePasswordStrength, validateEmail } = require('../middleware/inputSanitizer');
+const NotificationService = require('../services/notificationService');
 
 // Note: getClientIP is now imported from accountLockout middleware
 
@@ -1031,7 +1032,7 @@ const verifyEmail = async (req, res) => {
 
         // Check if user exists and is unverified
         const [users] = await pool.execute(
-            'SELECT user_id, email, status FROM general_users WHERE email = ?',
+            'SELECT user_id, email, status, first_name FROM general_users WHERE email = ?',
             [email.toLowerCase()]
         );
 
@@ -1069,6 +1070,21 @@ const verifyEmail = async (req, res) => {
         } catch (logError) {
             console.error('❌ Failed to log email verification activity:', logError.message);
             // Don't fail the main operation if logging fails
+        }
+
+        // Create welcome notification for the new user
+        try {
+            const firstName = user.first_name || 'User';
+            await NotificationService.createNotificationForUser(user.user_id, {
+                type: 'system',
+                title: '👋 Welcome to Soteros MDRRMO!',
+                message: `Hello ${firstName}! Welcome to Soteros MDRRMO. Your account has been successfully verified. You can now report incidents, receive alerts, and access all features of the emergency management system. Stay safe!`,
+                severity: 'info'
+            });
+            console.log('✅ Welcome notification created for user:', user.user_id);
+        } catch (notificationError) {
+            console.error('❌ Failed to create welcome notification:', notificationError.message);
+            // Don't fail the main operation if notification creation fails
         }
 
         console.log('Email verification successful for:', email);
