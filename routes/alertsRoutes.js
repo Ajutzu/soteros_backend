@@ -1265,10 +1265,7 @@ async function sendAlertEmail(alertId, alertData) {
                                                                                 </svg>
                                                                             </div>
                                                                         </td>
-                                                                        <td style="vertical-align: middle;">
-                                                                            <div class="detail-label" style="font-size: 13px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">Created On</div>
-                                                                            <div class="detail-value" style="font-size: 18px; font-weight: 700; color: ${getAlertColor(type)};">${createdDateFormatted}</div>
-                                                                        </td>
+                                                                    
                                                                     </tr>
                                                                 </table>
                                                             </td>
@@ -1403,12 +1400,7 @@ async function sendAlertEmail(alertId, alertData) {
                                         </div>
                                         <h3 class="action-title" style="margin: 0 0 16px 0; font-size: 24px; font-weight: 800; text-shadow: 0 2px 4px rgba(0,0,0,0.1);">SoteROS Emergency Management System</h3>
                                         <p class="action-text" style="margin: 0 0 24px 0; font-size: 16px; opacity: 0.95; font-weight: 500; max-width: 500px; margin-left: auto; margin-right: auto; line-height: 1.6;">This is an official alert notification from the MDRRMO Rosario, Batangas Emergency Response Team.</p>
-                                        <div class="action-time" style="font-size: 14px; opacity: 0.9; font-weight: 500; display: flex; align-items: center; justify-content: center; gap: 8px;">
-                                            <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
-                                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"></path>
-                                            </svg>
-                                            Sent on: ${sentDate}
-                                        </div>
+                                     
                                     </td>
                                 </tr>
                                 <tr>
