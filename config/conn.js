@@ -13,12 +13,4 @@ const pool = mysql.createPool({
   });
   
 
-// Add connection error handling
-pool.on('error', (err) => {
-    // Only log errors in development mode
-    if (process.env.NODE_ENV === 'development') {
-        console.error('MySQL Pool Error:', err);
-    }
-});
-
 module.exports = pool; 
