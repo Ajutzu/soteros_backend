@@ -61,10 +61,12 @@ router.get('/', authenticateAny, async (req, res) => {
       }
       
       // Get notifications for the user
+      // Convert timezone from UTC to Asia/Manila (UTC+8) for display
+      // Using DATE_ADD as fallback if CONVERT_TZ timezone tables are not loaded
       const [notifications] = await db.execute(
         `SELECT n.*, n.title, n.message,
-         DATE_FORMAT(n.created_at, '%Y-%m-%d %H:%i:%s') as created_at,
-         DATE_FORMAT(n.updated_at, '%Y-%m-%d %H:%i:%s') as updated_at
+         DATE_FORMAT(DATE_ADD(n.created_at, INTERVAL 8 HOUR), '%Y-%m-%d %H:%i:%s') as created_at,
+         DATE_FORMAT(DATE_ADD(n.updated_at, INTERVAL 8 HOUR), '%Y-%m-%d %H:%i:%s') as updated_at
          FROM notifications n
          WHERE ${whereClause}
          ORDER BY n.created_at DESC
