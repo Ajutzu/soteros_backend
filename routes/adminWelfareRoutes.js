@@ -374,7 +374,7 @@ router.get('/reports', authenticateAdmin, async (req, res) => {
     let reports, countResult;
     try {
       [reports] = await db.execute(
-        `SELECT gu.user_id, gu.first_name, gu.last_name, gu.email, gu.address, gu.city, gu.state, gu.zip_code,
+        `SELECT gu.user_id, gu.first_name, gu.last_name, gu.email, gu.phone, gu.address, gu.city, gu.state, gu.zip_code,
                 wr.report_id, wr.status, wr.additional_info, wr.submitted_at, wr.setting_id
          FROM general_users gu
          ${joinCondition}
