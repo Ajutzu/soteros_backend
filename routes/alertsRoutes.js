@@ -1251,28 +1251,6 @@ async function sendAlertEmail(alertId, alertData) {
                                                     </table>
                                                 </td>
                                             </tr>
-                                            <tr>
-                                                <td>
-                                                    <table role="presentation" class="detail-card" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: white; border-radius: 16px; border: 1px solid #e5e7eb; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
-                                                        <tr>
-                                                            <td style="padding: 20px;">
-                                                                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
-                                                                    <tr>
-                                                                        <td width="56" style="vertical-align: middle; padding-right: 16px;">
-                                                                            <div class="detail-icon" style="background-color: ${getAlertColor(type)}15; padding: 12px; border-radius: 12px; width: 48px; height: 48px; text-align: center;">
-                                                                                <svg width="24" height="24" fill="${getAlertColor(type)}" viewBox="0 0 20 20" style="vertical-align: middle;">
-                                                                                    <path fill-rule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clip-rule="evenodd"/>
-                                                                                </svg>
-                                                                            </div>
-                                                                        </td>
-                                                                    
-                                                                    </tr>
-                                                                </table>
-                                                            </td>
-                                                        </tr>
-                                                    </table>
-                                                </td>
-                                            </tr>
                                         </table>
                                         ${locationDisplayText && locationDisplayText !== 'Location not specified' && locationDisplayText !== null ? `
                                         <!-- Location Information -->
@@ -1400,7 +1378,7 @@ async function sendAlertEmail(alertId, alertData) {
                                         </div>
                                         <h3 class="action-title" style="margin: 0 0 16px 0; font-size: 24px; font-weight: 800; text-shadow: 0 2px 4px rgba(0,0,0,0.1);">SoteROS Emergency Management System</h3>
                                         <p class="action-text" style="margin: 0 0 24px 0; font-size: 16px; opacity: 0.95; font-weight: 500; max-width: 500px; margin-left: auto; margin-right: auto; line-height: 1.6;">This is an official alert notification from the MDRRMO Rosario, Batangas Emergency Response Team.</p>
-                                     
+                                 
                                     </td>
                                 </tr>
                                 <tr>
