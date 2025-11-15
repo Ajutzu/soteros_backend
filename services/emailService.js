@@ -183,13 +183,10 @@ const sendPasswordResetOTP = async (email, otp) => {
                     <table role="presentation" style="width: 100%; border-collapse: collapse; background-color: #f4f7fa;">
                         <tr>
                             <td align="center" style="padding: 40px 20px;">
-                                <table role="presentation" style="max-width: 600px; width: 100%; border-collapse: collapse; background-color: #ffffff; border-radius: 16px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.07); overflow: hidden;">
+                                <table role="presentation" style="max-width: 600px; width: 100%; border-collapse: collapse; background-color: #ffffff; border-radius: 0; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.07); overflow: hidden;">
                                     <!-- Header -->
                                     <tr>
                                         <td style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px 40px 30px; text-align: center;">
-                                            <div style="background-color: rgba(255, 255, 255, 0.2); width: 80px; height: 80px; border-radius: 50%; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center;">
-                                                <span style="font-size: 40px;">🔐</span>
-                                            </div>
                                             <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: 700; letter-spacing: -0.5px;">Password Reset</h1>
                                         </td>
                                     </tr>
@@ -203,7 +200,7 @@ const sendPasswordResetOTP = async (email, otp) => {
                                             <!-- OTP Box -->
                                             <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 32px;">
                                                 <tr>
-                                                    <td style="background: linear-gradient(135deg, #f0f4ff 0%, #e8eeff 100%); border: 2px solid #667eea; border-radius: 12px; padding: 32px; text-align: center;">
+                                                    <td style="background: linear-gradient(135deg, #f0f4ff 0%, #e8eeff 100%); border: 2px solid #667eea; border-radius: 0; padding: 32px; text-align: center;">
                                                         <p style="margin: 0 0 12px; color: #4b5563; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;">Your Verification Code</p>
                                                         <div style="font-size: 42px; font-weight: 700; color: #667eea; letter-spacing: 8px; font-family: 'Courier New', monospace;">${otp}</div>
                                                     </td>
@@ -213,7 +210,7 @@ const sendPasswordResetOTP = async (email, otp) => {
                                             <!-- Info Box -->
                                             <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 32px;">
                                                 <tr>
-                                                    <td style="background-color: #fef3c7; border-left: 4px solid #f59e0b; border-radius: 8px; padding: 16px 20px;">
+                                                    <td style="background-color: #fef3c7; border-left: 4px solid #f59e0b; border-radius: 0; padding: 16px 20px;">
                                                         <p style="margin: 0; color: #92400e; font-size: 14px; line-height: 1.5;">
                                                             <strong style="font-weight: 600;">⏱️ Time Sensitive:</strong> This code will expire in <strong>10 minutes</strong> for your security.
                                                         </p>
@@ -328,13 +325,10 @@ const sendIncidentAssignmentEmail = async (incidentData, teamId) => {
                             <table role="presentation" style="width: 100%; border-collapse: collapse; background-color: #f4f7fa;">
                                 <tr>
                                     <td align="center" style="padding: 40px 20px;">
-                                        <table role="presentation" style="max-width: 600px; width: 100%; border-collapse: collapse; background-color: #ffffff; border-radius: 16px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.07); overflow: hidden;">
+                                        <table role="presentation" style="max-width: 600px; width: 100%; border-collapse: collapse; background-color: #ffffff; border-radius: 0; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.07); overflow: hidden;">
                                             <!-- Header -->
                                             <tr>
                                                 <td style="background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%); padding: 40px 40px 30px; text-align: center;">
-                                                    <div style="background-color: rgba(255, 255, 255, 0.2); width: 80px; height: 80px; border-radius: 50%; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center;">
-                                                        <span style="font-size: 40px;">🚨</span>
-                                                    </div>
                                                     <h1 style="margin: 0 0 8px; color: #ffffff; font-size: 28px; font-weight: 700; letter-spacing: -0.5px;">New Incident Assignment</h1>
                                                     <p style="margin: 0; color: rgba(255, 255, 255, 0.9); font-size: 14px;">Immediate attention required</p>
                                                 </td>
@@ -348,7 +342,7 @@ const sendIncidentAssignmentEmail = async (incidentData, teamId) => {
                                                     
                                                     <!-- Priority Badge -->
                                                     <div style="margin: 0 0 24px; text-align: center;">
-                                                        <span style="display: inline-block; background-color: ${priorityColor.badge}; color: #ffffff; padding: 8px 20px; border-radius: 20px; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">
+                                                        <span style="display: inline-block; background-color: ${priorityColor.badge}; color: #ffffff; padding: 8px 20px; border-radius: 0; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">
                                                             ${incidentData.priorityLevel} Priority
                                                         </span>
                                                     </div>
@@ -356,7 +350,7 @@ const sendIncidentAssignmentEmail = async (incidentData, teamId) => {
                                                     <!-- Incident Details Card -->
                                                     <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 32px;">
                                                         <tr>
-                                                            <td style="background-color: #f9fafb; border: 2px solid #e5e7eb; border-radius: 12px; padding: 0; overflow: hidden;">
+                                                            <td style="background-color: #f9fafb; border: 2px solid #e5e7eb; border-radius: 0; padding: 0; overflow: hidden;">
                                                                 <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 16px 24px;">
                                                                     <h2 style="margin: 0; color: #ffffff; font-size: 18px; font-weight: 600;">Incident Details</h2>
                                                                 </div>
@@ -396,7 +390,7 @@ const sendIncidentAssignmentEmail = async (incidentData, teamId) => {
                                                     <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 24px;">
                                                         <tr>
                                                             <td align="center">
-                                                                <a href="${frontendUrl}/staff/incidents/${incidentData.id}" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #ffffff; padding: 16px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 15px; box-shadow: 0 4px 6px rgba(102, 126, 234, 0.3);">
+                                                                <a href="${frontendUrl}/staff/incidents/${incidentData.id}" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #ffffff; padding: 16px 40px; text-decoration: none; border-radius: 0; font-weight: 600; font-size: 15px; box-shadow: 0 4px 6px rgba(102, 126, 234, 0.3);">
                                                                     📋 View Full Incident Details
                                                                 </a>
                                                             </td>
@@ -497,13 +491,10 @@ const sendStaffAssignmentEmail = async (incidentData, staffId) => {
                     <table role="presentation" style="width: 100%; border-collapse: collapse; background-color: #f4f7fa;">
                         <tr>
                             <td align="center" style="padding: 40px 20px;">
-                                <table role="presentation" style="max-width: 600px; width: 100%; border-collapse: collapse; background-color: #ffffff; border-radius: 16px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.07); overflow: hidden;">
+                                <table role="presentation" style="max-width: 600px; width: 100%; border-collapse: collapse; background-color: #ffffff; border-radius: 0; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.07); overflow: hidden;">
                                     <!-- Header -->
                                     <tr>
                                         <td style="background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%); padding: 40px 40px 30px; text-align: center;">
-                                            <div style="background-color: rgba(255, 255, 255, 0.2); width: 80px; height: 80px; border-radius: 50%; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center;">
-                                                <span style="font-size: 40px;">🚨</span>
-                                            </div>
                                             <h1 style="margin: 0 0 8px; color: #ffffff; font-size: 28px; font-weight: 700; letter-spacing: -0.5px;">Personal Assignment</h1>
                                             <p style="margin: 0; color: rgba(255, 255, 255, 0.9); font-size: 14px;">You've been directly assigned to this incident</p>
                                         </td>
@@ -517,7 +508,7 @@ const sendStaffAssignmentEmail = async (incidentData, staffId) => {
                                             
                                             <!-- Priority Badge -->
                                             <div style="margin: 0 0 24px; text-align: center;">
-                                                <span style="display: inline-block; background-color: ${priorityColor.badge}; color: #ffffff; padding: 8px 20px; border-radius: 20px; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">
+                                                <span style="display: inline-block; background-color: ${priorityColor.badge}; color: #ffffff; padding: 8px 20px; border-radius: 0; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">
                                                     ${incidentData.priorityLevel} Priority
                                                 </span>
                                             </div>
@@ -525,7 +516,7 @@ const sendStaffAssignmentEmail = async (incidentData, staffId) => {
                                             <!-- Incident Details Card -->
                                             <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 32px;">
                                                 <tr>
-                                                    <td style="background-color: #f9fafb; border: 2px solid #e5e7eb; border-radius: 12px; padding: 0; overflow: hidden;">
+                                                    <td style="background-color: #f9fafb; border: 2px solid #e5e7eb; border-radius: 0; padding: 0; overflow: hidden;">
                                                         <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 16px 24px;">
                                                             <h2 style="margin: 0; color: #ffffff; font-size: 18px; font-weight: 600;">Incident Details</h2>
                                                         </div>
@@ -565,7 +556,7 @@ const sendStaffAssignmentEmail = async (incidentData, staffId) => {
                                             <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 24px;">
                                                 <tr>
                                                     <td align="center">
-                                                        <a href="${frontendUrl}/staff/incidents/${incidentData.id}" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #ffffff; padding: 16px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 15px; box-shadow: 0 4px 6px rgba(102, 126, 234, 0.3);">
+                                                        <a href="${frontendUrl}/staff/incidents/${incidentData.id}" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #ffffff; padding: 16px 40px; text-decoration: none; border-radius: 0; font-weight: 600; font-size: 15px; box-shadow: 0 4px 6px rgba(102, 126, 234, 0.3);">
                                                             📋 View Full Incident Details
                                                         </a>
                                                     </td>
@@ -629,13 +620,10 @@ const sendStaffAccountCreationEmail = async (staffData, plainPassword) => {
                     <table role="presentation" style="width: 100%; border-collapse: collapse; background-color: #f4f7fa;">
                         <tr>
                             <td align="center" style="padding: 40px 20px;">
-                                <table role="presentation" style="max-width: 600px; width: 100%; border-collapse: collapse; background-color: #ffffff; border-radius: 16px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.07); overflow: hidden;">
+                                <table role="presentation" style="max-width: 600px; width: 100%; border-collapse: collapse; background-color: #ffffff; border-radius: 0; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.07); overflow: hidden;">
                                     <!-- Header -->
                                     <tr>
                                         <td style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 40px 40px 30px; text-align: center;">
-                                            <div style="background-color: rgba(255, 255, 255, 0.2); width: 80px; height: 80px; border-radius: 50%; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center;">
-                                                <span style="font-size: 40px;">👋</span>
-                                            </div>
                                             <h1 style="margin: 0 0 8px; color: #ffffff; font-size: 28px; font-weight: 700; letter-spacing: -0.5px;">Welcome to SoteROS!</h1>
                                             <p style="margin: 0; color: rgba(255, 255, 255, 0.9); font-size: 14px;">Your account has been successfully created</p>
                                         </td>
@@ -650,7 +638,7 @@ const sendStaffAccountCreationEmail = async (staffData, plainPassword) => {
                                             <!-- Credentials Card -->
                                             <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 24px;">
                                                 <tr>
-                                                    <td style="background-color: #f9fafb; border: 2px solid #e5e7eb; border-radius: 12px; padding: 0; overflow: hidden;">
+                                                    <td style="background-color: #f9fafb; border: 2px solid #e5e7eb; border-radius: 0; padding: 0; overflow: hidden;">
                                                         <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 16px 24px;">
                                                             <h2 style="margin: 0; color: #ffffff; font-size: 18px; font-weight: 600;">🔑 Your Login Credentials</h2>
                                                         </div>
@@ -665,7 +653,7 @@ const sendStaffAccountCreationEmail = async (staffData, plainPassword) => {
                                                                 <tr>
                                                                     <td style="padding: 12px 0; border-bottom: 1px solid #e5e7eb;">
                                                                         <p style="margin: 0 0 4px; color: #6b7280; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Temporary Password</p>
-                                                                        <p style="margin: 0; color: #1f2937; font-size: 15px; font-family: 'Courier New', monospace; background-color: #fef3c7; padding: 8px 12px; border-radius: 6px; display: inline-block;">${plainPassword}</p>
+                                                                        <p style="margin: 0; color: #1f2937; font-size: 15px; font-family: 'Courier New', monospace; background-color: #fef3c7; padding: 8px 12px; border-radius: 0; display: inline-block;">${plainPassword}</p>
                                                                     </td>
                                                                 </tr>
                                                                 <tr>
@@ -689,7 +677,7 @@ const sendStaffAccountCreationEmail = async (staffData, plainPassword) => {
                                             <!-- Security Notice -->
                                             <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 32px;">
                                                 <tr>
-                                                    <td style="background-color: #fef3c7; border-left: 4px solid #f59e0b; border-radius: 8px; padding: 16px 20px;">
+                                                    <td style="background-color: #fef3c7; border-left: 4px solid #f59e0b; border-radius: 0; padding: 16px 20px;">
                                                         <p style="margin: 0 0 8px; color: #92400e; font-size: 14px; font-weight: 600;">
                                                             🔒 Important Security Notice
                                                         </p>
@@ -704,7 +692,7 @@ const sendStaffAccountCreationEmail = async (staffData, plainPassword) => {
                                             <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 24px;">
                                                 <tr>
                                                     <td align="center">
-                                                        <a href="${frontendUrl}/auth/login" style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: #ffffff; padding: 16px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 15px; box-shadow: 0 4px 6px rgba(16, 185, 129, 0.3);">
+                                                        <a href="${frontendUrl}/auth/login" style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: #ffffff; padding: 16px 40px; text-decoration: none; border-radius: 0; font-weight: 600; font-size: 15px; box-shadow: 0 4px 6px rgba(16, 185, 129, 0.3);">
                                                             🚀 Login to Your Account
                                                         </a>
                                                     </td>
@@ -766,13 +754,10 @@ const sendEmailVerificationOTP = async (email, otp, firstName) => {
                     <table role="presentation" style="width: 100%; border-collapse: collapse; background-color: #f4f7fa;">
                         <tr>
                             <td align="center" style="padding: 40px 20px;">
-                                <table role="presentation" style="max-width: 600px; width: 100%; border-collapse: collapse; background-color: #ffffff; border-radius: 16px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.07); overflow: hidden;">
+                                <table role="presentation" style="max-width: 600px; width: 100%; border-collapse: collapse; background-color: #ffffff; border-radius: 0; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.07); overflow: hidden;">
                                     <!-- Header -->
                                     <tr>
                                         <td style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 40px 40px 30px; text-align: center;">
-                                            <div style="background-color: rgba(255, 255, 255, 0.2); width: 80px; height: 80px; border-radius: 50%; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center;">
-                                                <span style="font-size: 40px;">✉️</span>
-                                            </div>
                                             <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: 700; letter-spacing: -0.5px;">Verify Your Email</h1>
                                         </td>
                                     </tr>
@@ -786,7 +771,7 @@ const sendEmailVerificationOTP = async (email, otp, firstName) => {
                                             <!-- OTP Box -->
                                             <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 32px;">
                                                 <tr>
-                                                    <td style="background: linear-gradient(135deg, #f0f4ff 0%, #e8eeff 100%); border: 2px solid #10b981; border-radius: 12px; padding: 32px; text-align: center;">
+                                                    <td style="background: linear-gradient(135deg, #f0f4ff 0%, #e8eeff 100%); border: 2px solid #10b981; border-radius: 0; padding: 32px; text-align: center;">
                                                         <p style="margin: 0 0 12px; color: #4b5563; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;">Your Verification Code</p>
                                                         <div style="font-size: 42px; font-weight: 700; color: #10b981; letter-spacing: 8px; font-family: 'Courier New', monospace;">${otp}</div>
                                                     </td>
@@ -796,7 +781,7 @@ const sendEmailVerificationOTP = async (email, otp, firstName) => {
                                             <!-- Info Box -->
                                             <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 32px;">
                                                 <tr>
-                                                    <td style="background-color: #fef3c7; border-left: 4px solid #f59e0b; border-radius: 8px; padding: 16px 20px;">
+                                                    <td style="background-color: #fef3c7; border-left: 4px solid #f59e0b; border-radius: 0; padding: 16px 20px;">
                                                         <p style="margin: 0; color: #92400e; font-size: 14px; line-height: 1.5;">
                                                             <strong style="font-weight: 600;">⏱️ Time Sensitive:</strong> This code will expire in <strong>10 minutes</strong> for your security.
                                                         </p>
