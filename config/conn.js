@@ -8,8 +8,8 @@ const pool = mysql.createPool({
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0,
-    debug: true,  // shows query logs / false if deployment
-    trace: true   // traces connection calls / false if deployment
+    debug: false,  // shows query logs / false if deployment
+    trace: false   // traces connection calls / false if deployment
   });
   
 
