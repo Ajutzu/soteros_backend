@@ -699,7 +699,8 @@ router.get('/:id', authenticateAny, async (req, res) => {
 
     // Authorization check: Staff can only view incidents assigned to them or their team
     if (userType === 'staff') {
-      const staffId = userId;
+      // Ensure staffId is a number for proper comparison
+      const staffId = Number(userId);
       
       // Get staff member's team ID
       const [staffData] = await pool.execute(
@@ -707,17 +708,18 @@ router.get('/:id', authenticateAny, async (req, res) => {
         [staffId]
       );
       
-      const staffTeamId = staffData.length > 0 ? staffData[0].assigned_team_id : null;
+      const staffTeamId = staffData.length > 0 ? Number(staffData[0].assigned_team_id) : null;
       
       // Check if incident is assigned to this staff member individually
-      const isAssignedToStaff = incident.assigned_staff_id === staffId;
+      // Convert to numbers for comparison to avoid type mismatch issues
+      const isAssignedToStaff = incident.assigned_staff_id != null && Number(incident.assigned_staff_id) === staffId;
       
       // Check if incident is assigned to staff's team (single assignment)
-      const isAssignedToTeam = incident.assigned_team_id === staffTeamId;
+      const isAssignedToTeam = incident.assigned_team_id != null && staffTeamId != null && Number(incident.assigned_team_id) === staffTeamId;
       
       // Check if incident is assigned to staff's team (multiple team assignments)
       let isAssignedToMultipleTeams = false;
-      if (incident.assigned_team_ids && staffTeamId) {
+      if (incident.assigned_team_ids && staffTeamId != null) {
         const teamIds = incident.assigned_team_ids.split(',').map(id => Number(id.trim()));
         isAssignedToMultipleTeams = teamIds.includes(staffTeamId);
       }
