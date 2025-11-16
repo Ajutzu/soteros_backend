@@ -682,7 +682,8 @@ router.get('/response-time-individual', async (req, res) => {
         updated_at,
         status,
         TIMESTAMPDIFF(MINUTE, date_reported, updated_at) as response_time_minutes,
-        TIMESTAMPDIFF(HOUR, date_reported, updated_at) as response_time_hours
+        TIMESTAMPDIFF(HOUR, date_reported, updated_at) as response_time_hours,
+        TIMESTAMPDIFF(DAY, date_reported, updated_at) as response_time_days
       FROM incident_reports
       WHERE status != 'pending'
         AND updated_at > date_reported
@@ -692,15 +693,25 @@ router.get('/response-time-individual', async (req, res) => {
     `, [parseInt(limit)]);
 
     // Format the response data
-    const formattedData = incidentData.map(row => ({
-      incident_id: row.incident_id,
-      incident_type: row.incident_type,
-      date_reported: row.date_reported,
-      updated_at: row.updated_at,
-      status: row.status,
-      response_time_minutes: Math.round(row.response_time_minutes || 0),
-      response_time_hours: row.response_time_hours ? parseFloat(row.response_time_hours.toFixed(2)) : 0
-    }));
+    const formattedData = incidentData.map(row => {
+      const minutes = Math.round(row.response_time_minutes || 0);
+      const hours = row.response_time_hours ? parseFloat(row.response_time_hours.toFixed(2)) : 0;
+      const days = row.response_time_days || 0;
+      
+      return {
+        incident_id: row.incident_id,
+        incident_type: row.incident_type,
+        date_reported: row.date_reported,
+        updated_at: row.updated_at,
+        status: row.status,
+        response_time_minutes: minutes,
+        response_time_hours: hours,
+        response_time_days: days,
+        // For chart display: use days if >= 24 hours, otherwise use hours
+        display_value: hours >= 24 ? parseFloat((hours / 24).toFixed(2)) : hours,
+        display_unit: hours >= 24 ? 'days' : 'hours'
+      };
+    });
 
     res.json({
       success: true,
@@ -748,16 +759,25 @@ router.get('/response-time-by-type', async (req, res) => {
     `);
 
     // Format the response data
-    const formattedData = responseTimeData.map(row => ({
-      incident_type: row.incident_type,
-      incident_count: row.incident_count,
-      avg_response_time_minutes: Math.round(row.avg_response_time_minutes || 0),
-      min_response_time_minutes: Math.round(row.min_response_time_minutes || 0),
-      max_response_time_minutes: Math.round(row.max_response_time_minutes || 0),
-      avg_resolution_time_minutes: row.avg_resolution_time_minutes ? Math.round(row.avg_resolution_time_minutes) : null,
-      // Convert to hours for better readability (optional)
-      avg_response_time_hours: row.avg_response_time_minutes ? (row.avg_response_time_minutes / 60).toFixed(2) : 0
-    }));
+    const formattedData = responseTimeData.map(row => {
+      const avgMinutes = Math.round(row.avg_response_time_minutes || 0);
+      const avgHours = avgMinutes ? parseFloat((avgMinutes / 60).toFixed(2)) : 0;
+      const avgDays = avgHours >= 24 ? parseFloat((avgHours / 24).toFixed(2)) : 0;
+      
+      return {
+        incident_type: row.incident_type,
+        incident_count: row.incident_count,
+        avg_response_time_minutes: avgMinutes,
+        min_response_time_minutes: Math.round(row.min_response_time_minutes || 0),
+        max_response_time_minutes: Math.round(row.max_response_time_minutes || 0),
+        avg_resolution_time_minutes: row.avg_resolution_time_minutes ? Math.round(row.avg_resolution_time_minutes) : null,
+        avg_response_time_hours: avgHours,
+        avg_response_time_days: avgDays,
+        // For chart display: use days if >= 24 hours, otherwise use hours
+        display_value: avgHours >= 24 ? avgDays : avgHours,
+        display_unit: avgHours >= 24 ? 'days' : 'hours'
+      };
+    });
 
     res.json({
       success: true,
