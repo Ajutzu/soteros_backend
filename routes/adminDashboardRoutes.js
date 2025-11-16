@@ -674,7 +674,9 @@ router.get('/response-time-individual', async (req, res) => {
     const { limit = 200, period = 'months', last = 12 } = req.query;
     
     // Calculate date filter based on period and last
-    const lastNum = Math.min(parseInt(last), period === 'days' ? 30 : 24);
+    const lastNum = parseInt(last) || (period === 'days' ? 7 : 12);
+    const maxLimit = period === 'days' ? 30 : 24;
+    const finalLastNum = Math.min(Math.max(lastNum, 1), maxLimit); // Ensure it's between 1 and max
     const intervalUnit = period === 'days' ? 'DAY' : 'MONTH';
 
     // Get individual incidents with their response times
@@ -695,7 +697,7 @@ router.get('/response-time-individual', async (req, res) => {
       ORDER BY date_reported DESC
       LIMIT ?
     `;
-    const [incidentData] = await pool.execute(query, [lastNum, parseInt(limit)]);
+    const [incidentData] = await pool.execute(query, [finalLastNum, parseInt(limit)]);
 
     // Format the response data
     const formattedData = incidentData.map(row => {
@@ -744,7 +746,9 @@ router.get('/response-time-by-type', async (req, res) => {
     const { period = 'months', last = 12 } = req.query;
     
     // Calculate date filter based on period and last
-    const lastNum = Math.min(parseInt(last), period === 'days' ? 30 : 24);
+    const lastNum = parseInt(last) || (period === 'days' ? 7 : 12);
+    const maxLimit = period === 'days' ? 30 : 24;
+    const finalLastNum = Math.min(Math.max(lastNum, 1), maxLimit); // Ensure it's between 1 and max
     const intervalUnit = period === 'days' ? 'DAY' : 'MONTH';
 
     // Calculate response time for incidents that have been responded to
@@ -768,7 +772,7 @@ router.get('/response-time-by-type', async (req, res) => {
       GROUP BY incident_type
       ORDER BY avg_response_time_minutes DESC
     `;
-    const [responseTimeData] = await pool.execute(query, [lastNum]);
+    const [responseTimeData] = await pool.execute(query, [finalLastNum]);
 
     // Format the response data
     const formattedData = responseTimeData.map(row => {
