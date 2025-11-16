@@ -665,6 +665,60 @@ router.get('/seasonal-patterns', async (req, res) => {
   }
 });
 
+// GET - Individual incident response times
+// Returns each incident with its response time
+router.get('/response-time-individual', async (req, res) => {
+  try {
+    console.log('Fetching individual incident response times...');
+
+    const { limit = 100 } = req.query; // Limit to prevent too much data
+
+    // Get individual incidents with their response times
+    const [incidentData] = await pool.execute(`
+      SELECT
+        incident_id,
+        incident_type,
+        date_reported,
+        updated_at,
+        status,
+        TIMESTAMPDIFF(MINUTE, date_reported, updated_at) as response_time_minutes,
+        TIMESTAMPDIFF(HOUR, date_reported, updated_at) as response_time_hours
+      FROM incident_reports
+      WHERE status != 'pending'
+        AND updated_at > date_reported
+        AND date_reported >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
+      ORDER BY date_reported DESC
+      LIMIT ?
+    `, [parseInt(limit)]);
+
+    // Format the response data
+    const formattedData = incidentData.map(row => ({
+      incident_id: row.incident_id,
+      incident_type: row.incident_type,
+      date_reported: row.date_reported,
+      updated_at: row.updated_at,
+      status: row.status,
+      response_time_minutes: Math.round(row.response_time_minutes || 0),
+      response_time_hours: row.response_time_hours ? parseFloat(row.response_time_hours.toFixed(2)) : 0
+    }));
+
+    res.json({
+      success: true,
+      incidents: formattedData,
+      total: formattedData.length,
+      note: 'Individual incident response times. Response time calculated as time from report submission to first status update. Only includes incidents responded to in the last 12 months.'
+    });
+
+  } catch (error) {
+    console.error('Error fetching individual incident response times:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch individual incident response times',
+      error: error.message
+    });
+  }
+});
+
 // GET - Response time per incident type
 // Calculates average response time (in minutes) for each incident type
 router.get('/response-time-by-type', async (req, res) => {
