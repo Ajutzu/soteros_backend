@@ -671,9 +671,19 @@ router.get('/response-activities', async (req, res) => {
   try {
     console.log('Fetching emergency response activities analytics...');
 
+    let responseTimeAnalysis = [];
+    let avgResponseTimeByPriority = [];
+    let resolutionTimeAnalysis = [];
+    let responseActivityTrends = [];
+    let teamPerformance = [];
+    let responseRate = { total_incidents: 0, responded_incidents: 0, response_rate_percentage: 0 };
+    let responseTimeDistribution = [];
+    let monthlyResponseSummary = [];
+
     // 1. Response Time Analysis - Time from incident report to team/staff assignment or status change
     // Treat any status change (from pending) or update as response activity
-    const [responseTimeAnalysis] = await pool.execute(`
+    try {
+      const [result1] = await pool.execute(`
       SELECT
         ir.incident_id,
         ir.date_reported,
@@ -714,10 +724,16 @@ router.get('/response-activities', async (req, res) => {
         OR EXISTS(SELECT 1 FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active')
         OR (ir.updated_at IS NOT NULL AND ir.updated_at > ir.date_reported)
       ORDER BY ir.date_reported DESC
-    `);
+      `);
+      responseTimeAnalysis = result1 || [];
+      console.log('✅ Query 1 (Response Time Analysis) completed');
+    } catch (error) {
+      console.error('❌ Error in Query 1 (Response Time Analysis):', error.message);
+    }
 
     // 2. Average Response Times by Priority Level
-    const [avgResponseTimeByPriority] = await pool.execute(`
+    try {
+      const [result2] = await pool.execute(`
       SELECT
         ir.priority_level,
         COUNT(*) as total_incidents,
@@ -746,10 +762,16 @@ router.get('/response-activities', async (req, res) => {
         OR EXISTS(SELECT 1 FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active')
         OR (ir.updated_at IS NOT NULL AND ir.updated_at > ir.date_reported)
       GROUP BY ir.priority_level
-    `);
+      `);
+      avgResponseTimeByPriority = result2 || [];
+      console.log('✅ Query 2 (Average Response Times by Priority) completed');
+    } catch (error) {
+      console.error('❌ Error in Query 2 (Average Response Times by Priority):', error.message);
+    }
 
     // 3. Average Resolution Times - Time from report to resolution
-    const [resolutionTimeAnalysis] = await pool.execute(`
+    try {
+      const [result3] = await pool.execute(`
       SELECT
         ir.incident_type,
         ir.priority_level,
@@ -762,10 +784,16 @@ router.get('/response-activities', async (req, res) => {
       AND ir.updated_at IS NOT NULL
       AND ir.updated_at > ir.date_reported
       GROUP BY ir.incident_type, ir.priority_level
-    `);
+      `);
+      resolutionTimeAnalysis = result3 || [];
+      console.log('✅ Query 3 (Resolution Time Analysis) completed');
+    } catch (error) {
+      console.error('❌ Error in Query 3 (Resolution Time Analysis):', error.message);
+    }
 
     // 4. Response Activity Trends - Daily response activities (last 30 days)
-    const [responseActivityTrends] = await pool.execute(`
+    try {
+      const [result4] = await pool.execute(`
       SELECT
         DATE(COALESCE(
           (SELECT MIN(ita2.assigned_at) FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active'),
@@ -793,16 +821,22 @@ router.get('/response-activities', async (req, res) => {
         CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
       ))
       ORDER BY activity_date ASC
-    `);
+      `);
+      responseActivityTrends = result4 || [];
+      console.log('✅ Query 4 (Response Activity Trends) completed');
+    } catch (error) {
+      console.error('❌ Error in Query 4 (Response Activity Trends):', error.message);
+    }
 
     // 5. Team Performance Metrics - Which teams are most active and responsive
-    const [teamPerformance] = await pool.execute(`
+    try {
+      const [result5] = await pool.execute(`
       SELECT
         t.id as team_id,
         t.name as team_name,
         COUNT(DISTINCT ir.incident_id) as total_incidents_handled,
         SUM(CASE WHEN ir.status = 'resolved' OR ir.status = 'closed' THEN 1 ELSE 0 END) as resolved_incidents,
-        AVG(TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(MIN(ita.assigned_at), ir.updated_at))) as avg_response_time_minutes,
+        AVG(TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(ita.assigned_at, ir.updated_at))) as avg_response_time_minutes,
         AVG(CASE 
           WHEN ir.status IN ('resolved', 'closed') 
           THEN TIMESTAMPDIFF(HOUR, ir.date_reported, ir.updated_at) 
@@ -812,12 +846,18 @@ router.get('/response-activities', async (req, res) => {
       INNER JOIN incident_team_assignments ita ON t.id = ita.team_id AND ita.status = 'active'
       INNER JOIN incident_reports ir ON ita.incident_id = ir.incident_id
       GROUP BY t.id, t.name
-      HAVING total_incidents_handled > 0
+      HAVING COUNT(DISTINCT ir.incident_id) > 0
       ORDER BY total_incidents_handled DESC, avg_response_time_minutes ASC
-    `);
+      `);
+      teamPerformance = result5 || [];
+      console.log('✅ Query 5 (Team Performance) completed');
+    } catch (error) {
+      console.error('❌ Error in Query 5 (Team Performance):', error.message);
+    }
 
     // 6. Response Rate Analysis - Percentage of incidents that received responses
-    const [responseRate] = await pool.execute(`
+    try {
+      const [result6] = await pool.execute(`
       SELECT
         COUNT(*) as total_incidents,
         SUM(CASE 
@@ -838,10 +878,16 @@ router.get('/response-activities', async (req, res) => {
           2
         ) as response_rate_percentage
       FROM incident_reports ir
-    `);
+      `);
+      responseRate = result6[0] || { total_incidents: 0, responded_incidents: 0, response_rate_percentage: 0 };
+      console.log('✅ Query 6 (Response Rate) completed');
+    } catch (error) {
+      console.error('❌ Error in Query 6 (Response Rate):', error.message);
+    }
 
     // 7. Response Time Distribution (histogram data)
-    const [responseTimeDistribution] = await pool.execute(`
+    try {
+      const [result7] = await pool.execute(`
       SELECT
         CASE
           WHEN TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(
@@ -883,10 +929,16 @@ router.get('/response-activities', async (req, res) => {
           WHEN '2-4 hours' THEN 5
           WHEN '4+ hours' THEN 6
         END
-    `);
+      `);
+      responseTimeDistribution = result7 || [];
+      console.log('✅ Query 7 (Response Time Distribution) completed');
+    } catch (error) {
+      console.error('❌ Error in Query 7 (Response Time Distribution):', error.message);
+    }
 
     // 8. Monthly Response Activities Summary
-    const [monthlyResponseSummary] = await pool.execute(`
+    try {
+      const [result8] = await pool.execute(`
       SELECT
         DATE_FORMAT(COALESCE(
           (SELECT MIN(ita2.assigned_at) FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active'),
@@ -918,19 +970,24 @@ router.get('/response-activities', async (req, res) => {
         CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
       ), '%Y-%m')
       ORDER BY month ASC
-    `);
+      `);
+      monthlyResponseSummary = result8 || [];
+      console.log('✅ Query 8 (Monthly Response Summary) completed');
+    } catch (error) {
+      console.error('❌ Error in Query 8 (Monthly Response Summary):', error.message);
+    }
 
     res.json({
       success: true,
       responseActivities: {
-        responseTimeAnalysis: responseTimeAnalysis || [],
-        avgResponseTimeByPriority: avgResponseTimeByPriority || [],
-        resolutionTimeAnalysis: resolutionTimeAnalysis || [],
-        responseActivityTrends: responseActivityTrends || [],
-        teamPerformance: teamPerformance || [],
-        responseRate: responseRate[0] || { total_incidents: 0, responded_incidents: 0, response_rate_percentage: 0 },
-        responseTimeDistribution: responseTimeDistribution || [],
-        monthlyResponseSummary: monthlyResponseSummary || []
+        responseTimeAnalysis: responseTimeAnalysis,
+        avgResponseTimeByPriority: avgResponseTimeByPriority,
+        resolutionTimeAnalysis: resolutionTimeAnalysis,
+        responseActivityTrends: responseActivityTrends,
+        teamPerformance: teamPerformance,
+        responseRate: responseRate,
+        responseTimeDistribution: responseTimeDistribution,
+        monthlyResponseSummary: monthlyResponseSummary
       },
       note: 'Emergency response activities analytics include response times, resolution times, team performance, and activity trends.'
     });
