@@ -671,10 +671,14 @@ router.get('/response-time-individual', async (req, res) => {
   try {
     console.log('Fetching individual incident response times...');
 
-    const { limit = 100 } = req.query; // Limit to prevent too much data
+    const { limit = 200, period = 'months', last = 12 } = req.query;
+    
+    // Calculate date filter based on period and last
+    const lastNum = Math.min(parseInt(last), period === 'days' ? 30 : 24);
+    const intervalUnit = period === 'days' ? 'DAY' : 'MONTH';
 
     // Get individual incidents with their response times
-    const [incidentData] = await pool.execute(`
+    const query = `
       SELECT
         incident_id,
         incident_type,
@@ -687,10 +691,11 @@ router.get('/response-time-individual', async (req, res) => {
       FROM incident_reports
       WHERE status != 'pending'
         AND updated_at > date_reported
-        AND date_reported >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
+        AND date_reported >= DATE_SUB(NOW(), INTERVAL ? ${intervalUnit})
       ORDER BY date_reported DESC
       LIMIT ?
-    `, [parseInt(limit)]);
+    `;
+    const [incidentData] = await pool.execute(query, [lastNum, parseInt(limit)]);
 
     // Format the response data
     const formattedData = incidentData.map(row => {
@@ -736,10 +741,16 @@ router.get('/response-time-by-type', async (req, res) => {
   try {
     console.log('Fetching response time per incident type...');
 
+    const { period = 'months', last = 12 } = req.query;
+    
+    // Calculate date filter based on period and last
+    const lastNum = Math.min(parseInt(last), period === 'days' ? 30 : 24);
+    const intervalUnit = period === 'days' ? 'DAY' : 'MONTH';
+
     // Calculate response time for incidents that have been responded to
     // Response time = time from date_reported to updated_at (when status changed from pending)
     // Only include incidents that are not in 'pending' status
-    const [responseTimeData] = await pool.execute(`
+    const query = `
       SELECT
         incident_type,
         COUNT(*) as incident_count,
@@ -753,10 +764,11 @@ router.get('/response-time-by-type', async (req, res) => {
       FROM incident_reports
       WHERE status != 'pending'
         AND updated_at > date_reported
-        AND date_reported >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
+        AND date_reported >= DATE_SUB(NOW(), INTERVAL ? ${intervalUnit})
       GROUP BY incident_type
       ORDER BY avg_response_time_minutes DESC
-    `);
+    `;
+    const [responseTimeData] = await pool.execute(query, [lastNum]);
 
     // Format the response data
     const formattedData = responseTimeData.map(row => {
