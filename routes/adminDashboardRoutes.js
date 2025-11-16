@@ -671,6 +671,9 @@ router.get('/response-activities', async (req, res) => {
   try {
     console.log('Fetching emergency response activities analytics...');
 
+    const { period = 'months', limit = 12 } = req.query;
+    console.log(`Response activities request - Period: ${period}, Limit: ${limit}`);
+    
     let responseTimeAnalysis = [];
     let avgResponseTimeByPriority = [];
     let resolutionTimeAnalysis = [];
@@ -679,6 +682,18 @@ router.get('/response-activities', async (req, res) => {
     let responseRate = { total_incidents: 0, responded_incidents: 0, response_rate_percentage: 0 };
     let responseTimeDistribution = [];
     let monthlyResponseSummary = [];
+    
+    // Determine date filter based on period
+    let dateFilter;
+    switch (period) {
+      case 'days':
+        dateFilter = `DATE_SUB(NOW(), INTERVAL ${Math.min(parseInt(limit), 90)} DAY)`;
+        break;
+      case 'months':
+      default:
+        dateFilter = `DATE_SUB(NOW(), INTERVAL ${Math.min(parseInt(limit), 24)} MONTH)`;
+        break;
+    }
 
     // 1. Response Time Analysis - Time from incident report to team/staff assignment or status change
     // Treat any status change (from pending) or update as response activity
@@ -936,14 +951,29 @@ router.get('/response-activities', async (req, res) => {
       console.error('❌ Error in Query 7 (Response Time Distribution):', error.message);
     }
 
-    // 8. Monthly Response Activities Summary
+    // 8. Monthly Response Activities Summary (with period filter)
     try {
-      const [result8] = await pool.execute(`
+      let dateFormat, groupBy;
+      
+      switch (period) {
+        case 'days':
+          dateFormat = '%Y-%m-%d';
+          groupBy = 'DATE(COALESCE(' +
+            '(SELECT MIN(ita2.assigned_at) FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = \'active\'), ' +
+            'CASE WHEN ir.status != \'pending\' THEN ir.updated_at ELSE ir.date_reported END))';
+          break;
+        case 'months':
+        default:
+          dateFormat = '%Y-%m';
+          groupBy = 'DATE_FORMAT(COALESCE(' +
+            '(SELECT MIN(ita2.assigned_at) FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = \'active\'), ' +
+            'CASE WHEN ir.status != \'pending\' THEN ir.updated_at ELSE ir.date_reported END), \'%Y-%m\')';
+          break;
+      }
+      
+      const query = `
       SELECT
-        DATE_FORMAT(COALESCE(
-          (SELECT MIN(ita2.assigned_at) FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active'),
-          CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
-        ), '%Y-%m') as month,
+        ${groupBy} as period,
         COUNT(DISTINCT ir.incident_id) as total_responses,
         SUM(CASE WHEN ir.status = 'resolved' OR ir.status = 'closed' THEN 1 ELSE 0 END) as resolved_count,
         AVG(TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(
@@ -964,14 +994,55 @@ router.get('/response-activities', async (req, res) => {
       AND COALESCE(
         (SELECT MIN(ita2.assigned_at) FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active'),
         CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
-      ) >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
-      GROUP BY DATE_FORMAT(COALESCE(
-        (SELECT MIN(ita2.assigned_at) FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active'),
-        CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
-      ), '%Y-%m')
-      ORDER BY month ASC
-      `);
-      monthlyResponseSummary = result8 || [];
+      ) >= ${dateFilter}
+      GROUP BY ${groupBy}
+      ORDER BY ${groupBy} ASC
+      `;
+      
+      const [result8] = await pool.execute(query);
+      
+      // Format the response data
+      const formattedData = result8.map(row => {
+        let formattedPeriod = row.period;
+        
+        if (period === 'days') {
+          try {
+            let dateStr = row.period;
+            if (typeof dateStr === 'number') {
+              dateStr = dateStr.toString();
+              if (dateStr.length === 8) {
+                dateStr = `${dateStr.substring(0, 4)}-${dateStr.substring(4, 6)}-${dateStr.substring(6, 8)}`;
+              }
+            }
+            const date = new Date(dateStr);
+            if (!isNaN(date.getTime())) {
+              formattedPeriod = date.toLocaleDateString('en-US', { 
+                month: 'short', 
+                day: 'numeric'
+              });
+            }
+          } catch (error) {
+            formattedPeriod = row.period;
+          }
+        } else if (period === 'months') {
+          const date = new Date(row.period + '-01');
+          formattedPeriod = date.toLocaleDateString('en-US', { 
+            month: 'short', 
+            year: 'numeric'
+          });
+        }
+        
+        return {
+          period: formattedPeriod,
+          month: row.period, // Keep original for backward compatibility
+          total_responses: row.total_responses,
+          resolved_count: row.resolved_count,
+          avg_response_time_minutes: row.avg_response_time_minutes,
+          avg_resolution_hours: row.avg_resolution_hours
+        };
+      });
+      
+      monthlyResponseSummary = formattedData || [];
       console.log('✅ Query 8 (Monthly Response Summary) completed');
     } catch (error) {
       console.error('❌ Error in Query 8 (Monthly Response Summary):', error.message);
