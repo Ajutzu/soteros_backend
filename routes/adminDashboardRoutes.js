@@ -665,409 +665,58 @@ router.get('/seasonal-patterns', async (req, res) => {
   }
 });
 
-// GET - Emergency Response Activities Analytics
-// Provides descriptive analytics for visualizing and assessing emergency response activities
-router.get('/response-activities', async (req, res) => {
+// GET - Response time per incident type
+// Calculates average response time (in minutes) for each incident type
+router.get('/response-time-by-type', async (req, res) => {
   try {
-    console.log('Fetching emergency response activities analytics...');
+    console.log('Fetching response time per incident type...');
 
-    const { period = 'months', limit = 12 } = req.query;
-    console.log(`Response activities request - Period: ${period}, Limit: ${limit}`);
-    
-    let responseTimeAnalysis = [];
-    let avgResponseTimeByPriority = [];
-    let resolutionTimeAnalysis = [];
-    let responseActivityTrends = [];
-    let teamPerformance = [];
-    let responseRate = { total_incidents: 0, responded_incidents: 0, response_rate_percentage: 0 };
-    let responseTimeDistribution = [];
-    let monthlyResponseSummary = [];
-    
-    // Determine date filter based on period
-    let dateFilter;
-    switch (period) {
-      case 'days':
-        dateFilter = `DATE_SUB(NOW(), INTERVAL ${Math.min(parseInt(limit), 90)} DAY)`;
-        break;
-      case 'months':
-      default:
-        dateFilter = `DATE_SUB(NOW(), INTERVAL ${Math.min(parseInt(limit), 24)} MONTH)`;
-        break;
-    }
-
-    // 1. Response Time Analysis - Time from incident report to team/staff assignment or status change
-    // Treat any status change (from pending) or update as response activity
-    try {
-      const [result1] = await pool.execute(`
+    // Calculate response time for incidents that have been responded to
+    // Response time = time from date_reported to updated_at (when status changed from pending)
+    // Only include incidents that are not in 'pending' status
+    const [responseTimeData] = await pool.execute(`
       SELECT
-        ir.incident_id,
-        ir.date_reported,
-        ir.priority_level,
-        ir.incident_type,
-        ir.status,
-        COALESCE(
-          (SELECT MIN(ita2.assigned_at) FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active'),
-          CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
-        ) as first_assigned_at,
-        TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(
-          (SELECT MIN(ita2.assigned_at) FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active'),
-          CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
-        )) as response_time_minutes,
-        CASE
-          WHEN TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(
-            (SELECT MIN(ita2.assigned_at) FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active'),
-            CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
-          )) <= 15 THEN '0-15 min'
-          WHEN TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(
-            (SELECT MIN(ita2.assigned_at) FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active'),
-            CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
-          )) <= 30 THEN '16-30 min'
-          WHEN TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(
-            (SELECT MIN(ita2.assigned_at) FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active'),
-            CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
-          )) <= 60 THEN '31-60 min'
-          WHEN TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(
-            (SELECT MIN(ita2.assigned_at) FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active'),
-            CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
-          )) <= 120 THEN '1-2 hours'
-          ELSE '2+ hours'
-        END as response_time_category
-      FROM incident_reports ir
-      WHERE ir.status != 'pending' 
-        OR ir.assigned_staff_id IS NOT NULL 
-        OR ir.assigned_team_id IS NOT NULL
-        OR EXISTS(SELECT 1 FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active')
-        OR (ir.updated_at IS NOT NULL AND ir.updated_at > ir.date_reported)
-      ORDER BY ir.date_reported DESC
-      `);
-      responseTimeAnalysis = result1 || [];
-      console.log('✅ Query 1 (Response Time Analysis) completed');
-    } catch (error) {
-      console.error('❌ Error in Query 1 (Response Time Analysis):', error.message);
-    }
-
-    // 2. Average Response Times by Priority Level
-    try {
-      const [result2] = await pool.execute(`
-      SELECT
-        ir.priority_level,
-        COUNT(*) as total_incidents,
-        AVG(
-          TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(
-            (SELECT MIN(ita2.assigned_at) FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active'),
-            CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
-          ))
-        ) as avg_response_time_minutes,
-        MIN(
-          TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(
-            (SELECT MIN(ita2.assigned_at) FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active'),
-            CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
-          ))
-        ) as min_response_time_minutes,
-        MAX(
-          TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(
-            (SELECT MIN(ita2.assigned_at) FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active'),
-            CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
-          ))
-        ) as max_response_time_minutes
-      FROM incident_reports ir
-      WHERE ir.status != 'pending' 
-        OR ir.assigned_staff_id IS NOT NULL 
-        OR ir.assigned_team_id IS NOT NULL
-        OR EXISTS(SELECT 1 FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active')
-        OR (ir.updated_at IS NOT NULL AND ir.updated_at > ir.date_reported)
-      GROUP BY ir.priority_level
-      `);
-      avgResponseTimeByPriority = result2 || [];
-      console.log('✅ Query 2 (Average Response Times by Priority) completed');
-    } catch (error) {
-      console.error('❌ Error in Query 2 (Average Response Times by Priority):', error.message);
-    }
-
-    // 3. Average Resolution Times - Time from report to resolution
-    try {
-      const [result3] = await pool.execute(`
-      SELECT
-        ir.incident_type,
-        ir.priority_level,
-        COUNT(*) as resolved_count,
-        AVG(TIMESTAMPDIFF(HOUR, ir.date_reported, ir.updated_at)) as avg_resolution_hours,
-        MIN(TIMESTAMPDIFF(HOUR, ir.date_reported, ir.updated_at)) as min_resolution_hours,
-        MAX(TIMESTAMPDIFF(HOUR, ir.date_reported, ir.updated_at)) as max_resolution_hours
-      FROM incident_reports ir
-      WHERE ir.status IN ('resolved', 'closed')
-      AND ir.updated_at IS NOT NULL
-      AND ir.updated_at > ir.date_reported
-      GROUP BY ir.incident_type, ir.priority_level
-      `);
-      resolutionTimeAnalysis = result3 || [];
-      console.log('✅ Query 3 (Resolution Time Analysis) completed');
-    } catch (error) {
-      console.error('❌ Error in Query 3 (Resolution Time Analysis):', error.message);
-    }
-
-    // 4. Response Activity Trends - Daily response activities (last 30 days)
-    try {
-      const [result4] = await pool.execute(`
-      SELECT
-        DATE(COALESCE(
-          (SELECT MIN(ita2.assigned_at) FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active'),
-          CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
-        )) as activity_date,
-        COUNT(DISTINCT ir.incident_id) as responses_count,
-        SUM(CASE WHEN ir.priority_level = 'critical' THEN 1 ELSE 0 END) as critical_responses,
-        SUM(CASE WHEN ir.priority_level = 'high' THEN 1 ELSE 0 END) as high_responses,
-        AVG(TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(
-          (SELECT MIN(ita2.assigned_at) FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active'),
-          CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
-        ))) as avg_response_time_minutes
-      FROM incident_reports ir
-      WHERE (ir.status != 'pending' 
-        OR ir.assigned_staff_id IS NOT NULL 
-        OR ir.assigned_team_id IS NOT NULL
-        OR EXISTS(SELECT 1 FROM incident_team_assignments ita WHERE ita.incident_id = ir.incident_id AND ita.status = 'active')
-        OR (ir.updated_at IS NOT NULL AND ir.updated_at > ir.date_reported))
-      AND COALESCE(
-        (SELECT MIN(ita2.assigned_at) FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active'),
-        CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
-      ) >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-      GROUP BY DATE(COALESCE(
-        (SELECT MIN(ita2.assigned_at) FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active'),
-        CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
-      ))
-      ORDER BY activity_date ASC
-      `);
-      responseActivityTrends = result4 || [];
-      console.log('✅ Query 4 (Response Activity Trends) completed');
-    } catch (error) {
-      console.error('❌ Error in Query 4 (Response Activity Trends):', error.message);
-    }
-
-    // 5. Team Performance Metrics - Which teams are most active and responsive
-    try {
-      const [result5] = await pool.execute(`
-      SELECT
-        t.id as team_id,
-        t.name as team_name,
-        COUNT(DISTINCT ir.incident_id) as total_incidents_handled,
-        SUM(CASE WHEN ir.status = 'resolved' OR ir.status = 'closed' THEN 1 ELSE 0 END) as resolved_incidents,
-        AVG(TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(ita.assigned_at, ir.updated_at))) as avg_response_time_minutes,
+        incident_type,
+        COUNT(*) as incident_count,
+        AVG(TIMESTAMPDIFF(MINUTE, date_reported, updated_at)) as avg_response_time_minutes,
+        MIN(TIMESTAMPDIFF(MINUTE, date_reported, updated_at)) as min_response_time_minutes,
+        MAX(TIMESTAMPDIFF(MINUTE, date_reported, updated_at)) as max_response_time_minutes,
         AVG(CASE 
-          WHEN ir.status IN ('resolved', 'closed') 
-          THEN TIMESTAMPDIFF(HOUR, ir.date_reported, ir.updated_at) 
-          ELSE NULL 
-        END) as avg_resolution_hours
-      FROM teams t
-      INNER JOIN incident_team_assignments ita ON t.id = ita.team_id AND ita.status = 'active'
-      INNER JOIN incident_reports ir ON ita.incident_id = ir.incident_id
-      GROUP BY t.id, t.name
-      HAVING COUNT(DISTINCT ir.incident_id) > 0
-      ORDER BY total_incidents_handled DESC, avg_response_time_minutes ASC
-      `);
-      teamPerformance = result5 || [];
-      console.log('✅ Query 5 (Team Performance) completed');
-    } catch (error) {
-      console.error('❌ Error in Query 5 (Team Performance):', error.message);
-    }
+          WHEN status = 'resolved' THEN TIMESTAMPDIFF(MINUTE, date_reported, updated_at)
+          ELSE NULL
+        END) as avg_resolution_time_minutes
+      FROM incident_reports
+      WHERE status != 'pending'
+        AND updated_at > date_reported
+        AND date_reported >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
+      GROUP BY incident_type
+      ORDER BY avg_response_time_minutes DESC
+    `);
 
-    // 6. Response Rate Analysis - Percentage of incidents that received responses
-    try {
-      const [result6] = await pool.execute(`
-      SELECT
-        COUNT(*) as total_incidents,
-        SUM(CASE 
-          WHEN ir.status != 'pending' 
-          OR ir.assigned_staff_id IS NOT NULL 
-          OR ir.assigned_team_id IS NOT NULL
-          OR EXISTS(SELECT 1 FROM incident_team_assignments ita WHERE ita.incident_id = ir.incident_id AND ita.status = 'active')
-          THEN 1 ELSE 0 
-        END) as responded_incidents,
-        ROUND(
-          (SUM(CASE 
-            WHEN ir.status != 'pending' 
-            OR ir.assigned_staff_id IS NOT NULL 
-            OR ir.assigned_team_id IS NOT NULL
-            OR EXISTS(SELECT 1 FROM incident_team_assignments ita WHERE ita.incident_id = ir.incident_id AND ita.status = 'active')
-            THEN 1 ELSE 0 
-          END) / COUNT(*)) * 100, 
-          2
-        ) as response_rate_percentage
-      FROM incident_reports ir
-      `);
-      responseRate = result6[0] || { total_incidents: 0, responded_incidents: 0, response_rate_percentage: 0 };
-      console.log('✅ Query 6 (Response Rate) completed');
-    } catch (error) {
-      console.error('❌ Error in Query 6 (Response Rate):', error.message);
-    }
-
-    // 7. Response Time Distribution (histogram data)
-    try {
-      const [result7] = await pool.execute(`
-      SELECT
-        CASE
-          WHEN TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(
-            (SELECT MIN(ita2.assigned_at) FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active'),
-            CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
-          )) <= 15 THEN '0-15 min'
-          WHEN TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(
-            (SELECT MIN(ita2.assigned_at) FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active'),
-            CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
-          )) <= 30 THEN '16-30 min'
-          WHEN TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(
-            (SELECT MIN(ita2.assigned_at) FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active'),
-            CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
-          )) <= 60 THEN '31-60 min'
-          WHEN TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(
-            (SELECT MIN(ita2.assigned_at) FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active'),
-            CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
-          )) <= 120 THEN '1-2 hours'
-          WHEN TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(
-            (SELECT MIN(ita2.assigned_at) FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active'),
-            CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
-          )) <= 240 THEN '2-4 hours'
-          ELSE '4+ hours'
-        END as time_category,
-        COUNT(*) as count
-      FROM incident_reports ir
-      WHERE ir.status != 'pending' 
-        OR ir.assigned_staff_id IS NOT NULL 
-        OR ir.assigned_team_id IS NOT NULL
-        OR EXISTS(SELECT 1 FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active')
-        OR (ir.updated_at IS NOT NULL AND ir.updated_at > ir.date_reported)
-      GROUP BY time_category
-      ORDER BY 
-        CASE time_category
-          WHEN '0-15 min' THEN 1
-          WHEN '16-30 min' THEN 2
-          WHEN '31-60 min' THEN 3
-          WHEN '1-2 hours' THEN 4
-          WHEN '2-4 hours' THEN 5
-          WHEN '4+ hours' THEN 6
-        END
-      `);
-      responseTimeDistribution = result7 || [];
-      console.log('✅ Query 7 (Response Time Distribution) completed');
-    } catch (error) {
-      console.error('❌ Error in Query 7 (Response Time Distribution):', error.message);
-    }
-
-    // 8. Monthly Response Activities Summary (with period filter)
-    try {
-      let dateFormat, groupBy;
-      
-      switch (period) {
-        case 'days':
-          dateFormat = '%Y-%m-%d';
-          groupBy = 'DATE(COALESCE(' +
-            '(SELECT MIN(ita2.assigned_at) FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = \'active\'), ' +
-            'CASE WHEN ir.status != \'pending\' THEN ir.updated_at ELSE ir.date_reported END))';
-          break;
-        case 'months':
-        default:
-          dateFormat = '%Y-%m';
-          groupBy = 'DATE_FORMAT(COALESCE(' +
-            '(SELECT MIN(ita2.assigned_at) FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = \'active\'), ' +
-            'CASE WHEN ir.status != \'pending\' THEN ir.updated_at ELSE ir.date_reported END), \'%Y-%m\')';
-          break;
-      }
-      
-      const query = `
-      SELECT
-        ${groupBy} as period,
-        COUNT(DISTINCT ir.incident_id) as total_responses,
-        SUM(CASE WHEN ir.status = 'resolved' OR ir.status = 'closed' THEN 1 ELSE 0 END) as resolved_count,
-        AVG(TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(
-          (SELECT MIN(ita2.assigned_at) FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active'),
-          CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
-        ))) as avg_response_time_minutes,
-        AVG(CASE 
-          WHEN ir.status IN ('resolved', 'closed') 
-          THEN TIMESTAMPDIFF(HOUR, ir.date_reported, ir.updated_at) 
-          ELSE NULL 
-        END) as avg_resolution_hours
-      FROM incident_reports ir
-      WHERE (ir.status != 'pending' 
-        OR ir.assigned_staff_id IS NOT NULL 
-        OR ir.assigned_team_id IS NOT NULL
-        OR EXISTS(SELECT 1 FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active')
-        OR (ir.updated_at IS NOT NULL AND ir.updated_at > ir.date_reported))
-      AND COALESCE(
-        (SELECT MIN(ita2.assigned_at) FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active'),
-        CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
-      ) >= ${dateFilter}
-      GROUP BY ${groupBy}
-      ORDER BY ${groupBy} ASC
-      `;
-      
-      const [result8] = await pool.execute(query);
-      
-      // Format the response data
-      const formattedData = result8.map(row => {
-        let formattedPeriod = row.period;
-        
-        if (period === 'days') {
-          try {
-            let dateStr = row.period;
-            if (typeof dateStr === 'number') {
-              dateStr = dateStr.toString();
-              if (dateStr.length === 8) {
-                dateStr = `${dateStr.substring(0, 4)}-${dateStr.substring(4, 6)}-${dateStr.substring(6, 8)}`;
-              }
-            }
-            const date = new Date(dateStr);
-            if (!isNaN(date.getTime())) {
-              formattedPeriod = date.toLocaleDateString('en-US', { 
-                month: 'short', 
-                day: 'numeric'
-              });
-            }
-          } catch (error) {
-            formattedPeriod = row.period;
-          }
-        } else if (period === 'months') {
-          const date = new Date(row.period + '-01');
-          formattedPeriod = date.toLocaleDateString('en-US', { 
-            month: 'short', 
-            year: 'numeric'
-          });
-        }
-        
-        return {
-          period: formattedPeriod,
-          month: row.period, // Keep original for backward compatibility
-          total_responses: row.total_responses,
-          resolved_count: row.resolved_count,
-          avg_response_time_minutes: row.avg_response_time_minutes,
-          avg_resolution_hours: row.avg_resolution_hours
-        };
-      });
-      
-      monthlyResponseSummary = formattedData || [];
-      console.log('✅ Query 8 (Monthly Response Summary) completed');
-    } catch (error) {
-      console.error('❌ Error in Query 8 (Monthly Response Summary):', error.message);
-    }
+    // Format the response data
+    const formattedData = responseTimeData.map(row => ({
+      incident_type: row.incident_type,
+      incident_count: row.incident_count,
+      avg_response_time_minutes: Math.round(row.avg_response_time_minutes || 0),
+      min_response_time_minutes: Math.round(row.min_response_time_minutes || 0),
+      max_response_time_minutes: Math.round(row.max_response_time_minutes || 0),
+      avg_resolution_time_minutes: row.avg_resolution_time_minutes ? Math.round(row.avg_resolution_time_minutes) : null,
+      // Convert to hours for better readability (optional)
+      avg_response_time_hours: row.avg_response_time_minutes ? (row.avg_response_time_minutes / 60).toFixed(2) : 0
+    }));
 
     res.json({
       success: true,
-      responseActivities: {
-        responseTimeAnalysis: responseTimeAnalysis,
-        avgResponseTimeByPriority: avgResponseTimeByPriority,
-        resolutionTimeAnalysis: resolutionTimeAnalysis,
-        responseActivityTrends: responseActivityTrends,
-        teamPerformance: teamPerformance,
-        responseRate: responseRate,
-        responseTimeDistribution: responseTimeDistribution,
-        monthlyResponseSummary: monthlyResponseSummary
-      },
-      note: 'Emergency response activities analytics include response times, resolution times, team performance, and activity trends.'
+      responseTimeData: formattedData,
+      note: 'Response time calculated as time from report submission to first status update. Only includes incidents responded to in the last 12 months.',
+      totalIncidents: formattedData.reduce((sum, item) => sum + item.incident_count, 0)
     });
 
   } catch (error) {
-    console.error('Error fetching emergency response activities analytics:', error);
+    console.error('Error fetching response time per incident type:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to fetch emergency response activities analytics',
+      message: 'Failed to fetch response time per incident type',
       error: error.message
     });
   }
