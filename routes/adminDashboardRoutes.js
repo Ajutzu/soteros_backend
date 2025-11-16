@@ -671,7 +671,8 @@ router.get('/response-activities', async (req, res) => {
   try {
     console.log('Fetching emergency response activities analytics...');
 
-    // 1. Response Time Analysis - Time from incident report to team/staff assignment
+    // 1. Response Time Analysis - Time from incident report to team/staff assignment or status change
+    // Treat any status change (from pending) or update as response activity
     const [responseTimeAnalysis] = await pool.execute(`
       SELECT
         ir.incident_id,
@@ -681,23 +682,39 @@ router.get('/response-activities', async (req, res) => {
         ir.status,
         COALESCE(
           MIN(ita.assigned_at),
-          ir.updated_at
+          CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
         ) as first_assigned_at,
-        TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(MIN(ita.assigned_at), ir.updated_at)) as response_time_minutes,
+        TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(
+          MIN(ita.assigned_at),
+          CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
+        )) as response_time_minutes,
         CASE
-          WHEN TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(MIN(ita.assigned_at), ir.updated_at)) <= 15 THEN '0-15 min'
-          WHEN TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(MIN(ita.assigned_at), ir.updated_at)) <= 30 THEN '16-30 min'
-          WHEN TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(MIN(ita.assigned_at), ir.updated_at)) <= 60 THEN '31-60 min'
-          WHEN TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(MIN(ita.assigned_at), ir.updated_at)) <= 120 THEN '1-2 hours'
+          WHEN TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(
+            MIN(ita.assigned_at),
+            CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
+          )) <= 15 THEN '0-15 min'
+          WHEN TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(
+            MIN(ita.assigned_at),
+            CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
+          )) <= 30 THEN '16-30 min'
+          WHEN TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(
+            MIN(ita.assigned_at),
+            CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
+          )) <= 60 THEN '31-60 min'
+          WHEN TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(
+            MIN(ita.assigned_at),
+            CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
+          )) <= 120 THEN '1-2 hours'
           ELSE '2+ hours'
         END as response_time_category
       FROM incident_reports ir
       LEFT JOIN incident_team_assignments ita ON ir.incident_id = ita.incident_id AND ita.status = 'active'
-      WHERE ir.status != 'pending' OR (ir.assigned_staff_id IS NOT NULL OR ir.assigned_team_id IS NOT NULL OR EXISTS(
-        SELECT 1 FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active'
-      ))
+      WHERE ir.status != 'pending' 
+        OR ir.assigned_staff_id IS NOT NULL 
+        OR ir.assigned_team_id IS NOT NULL
+        OR EXISTS(SELECT 1 FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active')
+        OR (ir.updated_at IS NOT NULL AND ir.updated_at > ir.date_reported)
       GROUP BY ir.incident_id
-      HAVING first_assigned_at IS NOT NULL
       ORDER BY ir.date_reported DESC
     `);
 
@@ -707,21 +724,31 @@ router.get('/response-activities', async (req, res) => {
         ir.priority_level,
         COUNT(*) as total_incidents,
         AVG(
-          TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(MIN(ita.assigned_at), ir.updated_at))
+          TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(
+            MIN(ita.assigned_at),
+            CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
+          ))
         ) as avg_response_time_minutes,
         MIN(
-          TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(MIN(ita.assigned_at), ir.updated_at))
+          TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(
+            MIN(ita.assigned_at),
+            CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
+          ))
         ) as min_response_time_minutes,
         MAX(
-          TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(MIN(ita.assigned_at), ir.updated_at))
+          TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(
+            MIN(ita.assigned_at),
+            CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
+          ))
         ) as max_response_time_minutes
       FROM incident_reports ir
       LEFT JOIN incident_team_assignments ita ON ir.incident_id = ita.incident_id AND ita.status = 'active'
-      WHERE ir.status != 'pending' OR (ir.assigned_staff_id IS NOT NULL OR ir.assigned_team_id IS NOT NULL OR EXISTS(
-        SELECT 1 FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active'
-      ))
+      WHERE ir.status != 'pending' 
+        OR ir.assigned_staff_id IS NOT NULL 
+        OR ir.assigned_team_id IS NOT NULL
+        OR EXISTS(SELECT 1 FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active')
+        OR (ir.updated_at IS NOT NULL AND ir.updated_at > ir.date_reported)
       GROUP BY ir.priority_level
-      HAVING MIN(ita.assigned_at) IS NOT NULL OR ir.updated_at IS NOT NULL
     `);
 
     // 3. Average Resolution Times - Time from report to resolution
@@ -743,16 +770,31 @@ router.get('/response-activities', async (req, res) => {
     // 4. Response Activity Trends - Daily response activities (last 30 days)
     const [responseActivityTrends] = await pool.execute(`
       SELECT
-        DATE(COALESCE(ita.assigned_at, ir.updated_at)) as activity_date,
+        DATE(COALESCE(
+          (SELECT MIN(ita2.assigned_at) FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active'),
+          CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
+        )) as activity_date,
         COUNT(DISTINCT ir.incident_id) as responses_count,
         SUM(CASE WHEN ir.priority_level = 'critical' THEN 1 ELSE 0 END) as critical_responses,
         SUM(CASE WHEN ir.priority_level = 'high' THEN 1 ELSE 0 END) as high_responses,
-        AVG(TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(MIN(ita.assigned_at), ir.updated_at))) as avg_response_time_minutes
+        AVG(TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(
+          (SELECT MIN(ita2.assigned_at) FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active'),
+          CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
+        ))) as avg_response_time_minutes
       FROM incident_reports ir
-      LEFT JOIN incident_team_assignments ita ON ir.incident_id = ita.incident_id AND ita.status = 'active'
-      WHERE (ir.status != 'pending' OR ir.assigned_staff_id IS NOT NULL OR ir.assigned_team_id IS NOT NULL)
-      AND COALESCE(ita.assigned_at, ir.updated_at) >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-      GROUP BY DATE(COALESCE(ita.assigned_at, ir.updated_at))
+      WHERE (ir.status != 'pending' 
+        OR ir.assigned_staff_id IS NOT NULL 
+        OR ir.assigned_team_id IS NOT NULL
+        OR EXISTS(SELECT 1 FROM incident_team_assignments ita WHERE ita.incident_id = ir.incident_id AND ita.status = 'active')
+        OR (ir.updated_at IS NOT NULL AND ir.updated_at > ir.date_reported))
+      AND COALESCE(
+        (SELECT MIN(ita2.assigned_at) FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active'),
+        CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
+      ) >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+      GROUP BY DATE(COALESCE(
+        (SELECT MIN(ita2.assigned_at) FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active'),
+        CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
+      ))
       ORDER BY activity_date ASC
     `);
 
@@ -805,21 +847,37 @@ router.get('/response-activities', async (req, res) => {
     const [responseTimeDistribution] = await pool.execute(`
       SELECT
         CASE
-          WHEN TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(MIN(ita.assigned_at), ir.updated_at)) <= 15 THEN '0-15 min'
-          WHEN TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(MIN(ita.assigned_at), ir.updated_at)) <= 30 THEN '16-30 min'
-          WHEN TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(MIN(ita.assigned_at), ir.updated_at)) <= 60 THEN '31-60 min'
-          WHEN TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(MIN(ita.assigned_at), ir.updated_at)) <= 120 THEN '1-2 hours'
-          WHEN TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(MIN(ita.assigned_at), ir.updated_at)) <= 240 THEN '2-4 hours'
+          WHEN TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(
+            MIN(ita.assigned_at),
+            CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
+          )) <= 15 THEN '0-15 min'
+          WHEN TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(
+            MIN(ita.assigned_at),
+            CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
+          )) <= 30 THEN '16-30 min'
+          WHEN TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(
+            MIN(ita.assigned_at),
+            CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
+          )) <= 60 THEN '31-60 min'
+          WHEN TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(
+            MIN(ita.assigned_at),
+            CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
+          )) <= 120 THEN '1-2 hours'
+          WHEN TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(
+            MIN(ita.assigned_at),
+            CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
+          )) <= 240 THEN '2-4 hours'
           ELSE '4+ hours'
         END as time_category,
         COUNT(*) as count
       FROM incident_reports ir
       LEFT JOIN incident_team_assignments ita ON ir.incident_id = ita.incident_id AND ita.status = 'active'
-      WHERE ir.status != 'pending' OR (ir.assigned_staff_id IS NOT NULL OR ir.assigned_team_id IS NOT NULL OR EXISTS(
-        SELECT 1 FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active'
-      ))
+      WHERE ir.status != 'pending' 
+        OR ir.assigned_staff_id IS NOT NULL 
+        OR ir.assigned_team_id IS NOT NULL
+        OR EXISTS(SELECT 1 FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active')
+        OR (ir.updated_at IS NOT NULL AND ir.updated_at > ir.date_reported)
       GROUP BY time_category
-      HAVING MIN(ita.assigned_at) IS NOT NULL OR ir.updated_at IS NOT NULL
       ORDER BY 
         CASE time_category
           WHEN '0-15 min' THEN 1
@@ -834,10 +892,16 @@ router.get('/response-activities', async (req, res) => {
     // 8. Monthly Response Activities Summary
     const [monthlyResponseSummary] = await pool.execute(`
       SELECT
-        DATE_FORMAT(COALESCE(ita.assigned_at, ir.updated_at), '%Y-%m') as month,
+        DATE_FORMAT(COALESCE(
+          MIN(ita.assigned_at),
+          CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
+        ), '%Y-%m') as month,
         COUNT(DISTINCT ir.incident_id) as total_responses,
         SUM(CASE WHEN ir.status = 'resolved' OR ir.status = 'closed' THEN 1 ELSE 0 END) as resolved_count,
-        AVG(TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(MIN(ita.assigned_at), ir.updated_at))) as avg_response_time_minutes,
+        AVG(TIMESTAMPDIFF(MINUTE, ir.date_reported, COALESCE(
+          MIN(ita.assigned_at),
+          CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
+        ))) as avg_response_time_minutes,
         AVG(CASE 
           WHEN ir.status IN ('resolved', 'closed') 
           THEN TIMESTAMPDIFF(HOUR, ir.date_reported, ir.updated_at) 
@@ -845,9 +909,19 @@ router.get('/response-activities', async (req, res) => {
         END) as avg_resolution_hours
       FROM incident_reports ir
       LEFT JOIN incident_team_assignments ita ON ir.incident_id = ita.incident_id AND ita.status = 'active'
-      WHERE (ir.status != 'pending' OR ir.assigned_staff_id IS NOT NULL OR ir.assigned_team_id IS NOT NULL)
-      AND COALESCE(ita.assigned_at, ir.updated_at) >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
-      GROUP BY DATE_FORMAT(COALESCE(ita.assigned_at, ir.updated_at), '%Y-%m')
+      WHERE (ir.status != 'pending' 
+        OR ir.assigned_staff_id IS NOT NULL 
+        OR ir.assigned_team_id IS NOT NULL
+        OR EXISTS(SELECT 1 FROM incident_team_assignments ita2 WHERE ita2.incident_id = ir.incident_id AND ita2.status = 'active')
+        OR (ir.updated_at IS NOT NULL AND ir.updated_at > ir.date_reported))
+      AND COALESCE(
+        MIN(ita.assigned_at),
+        CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
+      ) >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
+      GROUP BY DATE_FORMAT(COALESCE(
+        MIN(ita.assigned_at),
+        CASE WHEN ir.status != 'pending' THEN ir.updated_at ELSE ir.date_reported END
+      ), '%Y-%m')
       ORDER BY month ASC
     `);
 
