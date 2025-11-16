@@ -665,4 +665,61 @@ router.get('/seasonal-patterns', async (req, res) => {
   }
 });
 
+// GET - Response time per incident type
+// Calculates average response time (in minutes) for each incident type
+router.get('/response-time-by-type', async (req, res) => {
+  try {
+    console.log('Fetching response time per incident type...');
+
+    // Calculate response time for incidents that have been responded to
+    // Response time = time from date_reported to updated_at (when status changed from pending)
+    // Only include incidents that are not in 'pending' status
+    const [responseTimeData] = await pool.execute(`
+      SELECT
+        incident_type,
+        COUNT(*) as incident_count,
+        AVG(TIMESTAMPDIFF(MINUTE, date_reported, updated_at)) as avg_response_time_minutes,
+        MIN(TIMESTAMPDIFF(MINUTE, date_reported, updated_at)) as min_response_time_minutes,
+        MAX(TIMESTAMPDIFF(MINUTE, date_reported, updated_at)) as max_response_time_minutes,
+        AVG(CASE 
+          WHEN status = 'resolved' THEN TIMESTAMPDIFF(MINUTE, date_reported, updated_at)
+          ELSE NULL
+        END) as avg_resolution_time_minutes
+      FROM incident_reports
+      WHERE status != 'pending'
+        AND updated_at > date_reported
+        AND date_reported >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
+      GROUP BY incident_type
+      ORDER BY avg_response_time_minutes DESC
+    `);
+
+    // Format the response data
+    const formattedData = responseTimeData.map(row => ({
+      incident_type: row.incident_type,
+      incident_count: row.incident_count,
+      avg_response_time_minutes: Math.round(row.avg_response_time_minutes || 0),
+      min_response_time_minutes: Math.round(row.min_response_time_minutes || 0),
+      max_response_time_minutes: Math.round(row.max_response_time_minutes || 0),
+      avg_resolution_time_minutes: row.avg_resolution_time_minutes ? Math.round(row.avg_resolution_time_minutes) : null,
+      // Convert to hours for better readability (optional)
+      avg_response_time_hours: row.avg_response_time_minutes ? (row.avg_response_time_minutes / 60).toFixed(2) : 0
+    }));
+
+    res.json({
+      success: true,
+      responseTimeData: formattedData,
+      note: 'Response time calculated as time from report submission to first status update. Only includes incidents responded to in the last 12 months.',
+      totalIncidents: formattedData.reduce((sum, item) => sum + item.incident_count, 0)
+    });
+
+  } catch (error) {
+    console.error('Error fetching response time per incident type:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch response time per incident type',
+      error: error.message
+    });
+  }
+});
+
 module.exports = router;
