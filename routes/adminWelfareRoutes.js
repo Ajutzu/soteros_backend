@@ -456,6 +456,7 @@ router.get('/reports', authenticateAdmin, async (req, res) => {
 // Get welfare check statistics (admin only) - alias for /stats
 router.get('/stats', authenticateAdmin, async (req, res) => {
   try {
+    const { year } = req.query;
     let stats, recentReports, latestDistribution, totalActiveUsers, activeSettingId;
     
     // Get settings count and active setting ID
@@ -476,7 +477,11 @@ router.get('/stats', authenticateAdmin, async (req, res) => {
     }
 
     try {
-      // Get total counts (filtered by active setting if exists)
+      // Build year filter condition
+      const yearFilter = year ? 'AND YEAR(wr.submitted_at) = ?' : '';
+      const yearParam = year ? [parseInt(year)] : [];
+      
+      // Get total counts (filtered by active setting and year if exists)
       if (activeSettingId) {
         [stats] = await db.execute(`
           SELECT 
@@ -487,8 +492,8 @@ router.get('/stats', authenticateAdmin, async (req, res) => {
             DATE(MIN(submitted_at)) as first_report_date,
             DATE(MAX(submitted_at)) as latest_report_date
           FROM welfare_reports wr
-          WHERE wr.setting_id = ?
-        `, [activeSettingId]);
+          WHERE wr.setting_id = ? ${yearFilter}
+        `, [activeSettingId, ...yearParam]);
       } else {
         [stats] = await db.execute(`
           SELECT 
@@ -499,11 +504,14 @@ router.get('/stats', authenticateAdmin, async (req, res) => {
             DATE(MIN(submitted_at)) as first_report_date,
             DATE(MAX(submitted_at)) as latest_report_date
           FROM welfare_reports wr
-        `);
+          WHERE 1=1 ${yearFilter}
+        `, yearParam);
       }
 
-      // Get latest welfare status distribution (latest report per user, filtered by active setting)
+      // Get latest welfare status distribution (latest report per user, filtered by active setting and year)
       if (activeSettingId) {
+        const yearFilterSubquery = year ? 'AND YEAR(submitted_at) = ?' : '';
+        const yearParams = year ? [parseInt(year), parseInt(year)] : [];
         [latestDistribution] = await db.execute(`
           SELECT 
             wr.status,
@@ -512,13 +520,15 @@ router.get('/stats', authenticateAdmin, async (req, res) => {
           INNER JOIN (
             SELECT user_id, MAX(submitted_at) as max_submitted_at
             FROM welfare_reports
-            WHERE setting_id = ?
+            WHERE setting_id = ? ${yearFilterSubquery}
             GROUP BY user_id
           ) latest ON wr.user_id = latest.user_id AND wr.submitted_at = latest.max_submitted_at
-          WHERE wr.setting_id = ?
+          WHERE wr.setting_id = ? ${yearFilter}
           GROUP BY wr.status
-        `, [activeSettingId, activeSettingId]);
+        `, [activeSettingId, ...yearParams, activeSettingId, ...yearParam]);
       } else {
+        const yearFilterSubquery = year ? 'AND YEAR(submitted_at) = ?' : '';
+        const yearParams = year ? [parseInt(year), parseInt(year)] : [];
         [latestDistribution] = await db.execute(`
           SELECT 
             wr.status,
@@ -527,10 +537,12 @@ router.get('/stats', authenticateAdmin, async (req, res) => {
           INNER JOIN (
             SELECT user_id, MAX(submitted_at) as max_submitted_at
             FROM welfare_reports
+            WHERE 1=1 ${yearFilterSubquery}
             GROUP BY user_id
           ) latest ON wr.user_id = latest.user_id AND wr.submitted_at = latest.max_submitted_at
+          WHERE 1=1 ${yearFilter}
           GROUP BY wr.status
-        `);
+        `, yearParams);
       }
 
       // Get total active users
@@ -540,24 +552,28 @@ router.get('/stats', authenticateAdmin, async (req, res) => {
         WHERE status = 1
       `);
 
-      // Get recent reports (filtered by active setting if exists)
+      // Get recent reports (filtered by active setting and year if exists)
+      const yearFilterReports = year ? 'AND YEAR(wr.submitted_at) = ?' : '';
+      const yearParamReports = year ? [parseInt(year)] : [];
+      
       if (activeSettingId) {
         [recentReports] = await db.execute(`
           SELECT wr.status, wr.submitted_at, gu.first_name, gu.last_name
           FROM welfare_reports wr
           JOIN general_users gu ON wr.user_id = gu.user_id
-          WHERE wr.setting_id = ?
+          WHERE wr.setting_id = ? ${yearFilterReports}
           ORDER BY wr.submitted_at DESC
           LIMIT 10
-        `, [activeSettingId]);
+        `, [activeSettingId, ...yearParamReports]);
       } else {
         [recentReports] = await db.execute(`
           SELECT wr.status, wr.submitted_at, gu.first_name, gu.last_name
           FROM welfare_reports wr
           JOIN general_users gu ON wr.user_id = gu.user_id
+          WHERE 1=1 ${yearFilterReports}
           ORDER BY wr.submitted_at DESC
           LIMIT 10
-        `);
+        `, yearParamReports);
       }
     } catch (tableError) {
       // If table doesn't exist, return empty statistics

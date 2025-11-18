@@ -2,27 +2,18 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../config/conn');
 
-// Helper function to build date filter WHERE clause
-const buildDateFilter = (year, month, day) => {
-  const conditions = [];
-  const params = [];
-  
+// Helper function to build date filter WHERE clause (year only)
+const buildDateFilter = (year) => {
   if (year) {
-    conditions.push('YEAR(date_reported) = ?');
-    params.push(parseInt(year));
-  }
-  if (month) {
-    conditions.push('MONTH(date_reported) = ?');
-    params.push(parseInt(month));
-  }
-  if (day) {
-    conditions.push('DAY(date_reported) = ?');
-    params.push(parseInt(day));
+    return {
+      whereClause: 'WHERE YEAR(date_reported) = ?',
+      params: [parseInt(year)]
+    };
   }
   
   return {
-    whereClause: conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '',
-    params
+    whereClause: '',
+    params: []
   };
 };
 
@@ -38,29 +29,52 @@ router.get('/test', (req, res) => {
 router.get('/stats', async (req, res) => {
   try {
     console.log('Fetching dashboard statistics...');
-    const { year, month, day } = req.query;
+    const { year } = req.query;
     
-    // Build date filter for incidents
-    const incidentDateFilter = buildDateFilter(year, month, day);
+    // Build date filter for incidents (year only)
+    const incidentDateFilter = buildDateFilter(year);
     const incidentWhere = incidentDateFilter.whereClause ? `WHERE ${incidentDateFilter.whereClause.replace('WHERE ', '')}` : '';
     
-    // Get total counts with date filters
-    const [userStats] = await pool.execute(`
-      SELECT
-        COUNT(*) as total_users,
-        SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) as active_users,
-        SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN 1 ELSE 0 END) as new_users_month
-      FROM general_users
-      WHERE status = 1
-    `);
+    // Get total counts with year filter
+    const userStatsQuery = incidentDateFilter.params.length > 0
+      ? `
+          SELECT
+            COUNT(*) as total_users,
+            SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) as active_users,
+            SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN 1 ELSE 0 END) as new_users_month
+          FROM general_users
+          WHERE status = 1 AND YEAR(created_at) = ?
+        `
+      : `
+          SELECT
+            COUNT(*) as total_users,
+            SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) as active_users,
+            SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN 1 ELSE 0 END) as new_users_month
+          FROM general_users
+          WHERE status = 1
+        `;
+    const [userStats] = incidentDateFilter.params.length > 0
+      ? await pool.execute(userStatsQuery, incidentDateFilter.params)
+      : await pool.execute(userStatsQuery);
 
-    const [staffStats] = await pool.execute(`
-      SELECT
-        COUNT(*) as total_staff,
-        SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) as active_staff
-      FROM staff
-      WHERE status = 1
-    `);
+    const staffStatsQuery = incidentDateFilter.params.length > 0
+      ? `
+          SELECT
+            COUNT(*) as total_staff,
+            SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) as active_staff
+          FROM staff
+          WHERE status = 1 AND YEAR(created_at) = ?
+        `
+      : `
+          SELECT
+            COUNT(*) as total_staff,
+            SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) as active_staff
+          FROM staff
+          WHERE status = 1
+        `;
+    const [staffStats] = incidentDateFilter.params.length > 0
+      ? await pool.execute(staffStatsQuery, incidentDateFilter.params)
+      : await pool.execute(staffStatsQuery);
 
     const [incidentStats] = incidentDateFilter.params.length > 0
       ? await pool.execute(`
@@ -81,13 +95,25 @@ router.get('/stats', async (req, res) => {
           FROM incident_reports
         `);
 
-    const [alertStats] = await pool.execute(`
-      SELECT
-        COUNT(*) as total_alerts,
-        SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active_alerts,
-        SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 ELSE 0 END) as alerts_this_week
-      FROM alerts
-    `);
+    const alertStatsQuery = incidentDateFilter.params.length > 0
+      ? `
+          SELECT
+            COUNT(*) as total_alerts,
+            SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active_alerts,
+            SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 ELSE 0 END) as alerts_this_week
+          FROM alerts
+          WHERE YEAR(created_at) = ?
+        `
+      : `
+          SELECT
+            COUNT(*) as total_alerts,
+            SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active_alerts,
+            SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 ELSE 0 END) as alerts_this_week
+          FROM alerts
+        `;
+    const [alertStats] = incidentDateFilter.params.length > 0
+      ? await pool.execute(alertStatsQuery, incidentDateFilter.params)
+      : await pool.execute(alertStatsQuery);
     
     // Get recent activity (using incident reports as activity proxy) with date filter
     const [recentActivity] = incidentDateFilter.params.length > 0
@@ -143,17 +169,30 @@ router.get('/stats', async (req, res) => {
       ? await pool.execute(incidentTrendsQuery, incidentDateFilter.params)
       : await pool.execute(incidentTrendsQuery);
 
-    // Get user registration trends (last 30 days)
-    const [userTrends] = await pool.execute(`
-      SELECT
-        DATE(created_at) as date,
-        COUNT(*) as count
-      FROM general_users
-      WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-      AND status = 1
-      GROUP BY DATE(created_at)
-      ORDER BY date ASC
-    `);
+    // Get user registration trends with year filter
+    const userTrendsQuery = incidentDateFilter.params.length > 0
+      ? `
+          SELECT
+            DATE(created_at) as date,
+            COUNT(*) as count
+          FROM general_users
+          WHERE YEAR(created_at) = ? AND status = 1
+          GROUP BY DATE(created_at)
+          ORDER BY date ASC
+        `
+      : `
+          SELECT
+            DATE(created_at) as date,
+            COUNT(*) as count
+          FROM general_users
+          WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+          AND status = 1
+          GROUP BY DATE(created_at)
+          ORDER BY date ASC
+        `;
+    const [userTrends] = incidentDateFilter.params.length > 0
+      ? await pool.execute(userTrendsQuery, incidentDateFilter.params)
+      : await pool.execute(userTrendsQuery);
     
     res.json({
       success: true,
@@ -184,8 +223,8 @@ router.get('/stats', async (req, res) => {
 router.get('/overview', async (req, res) => {
   try {
     console.log('Fetching system overview...');
-    const { year, month, day } = req.query;
-    const incidentDateFilter = buildDateFilter(year, month, day);
+    const { year } = req.query;
+    const incidentDateFilter = buildDateFilter(year);
     
     // Get user type distribution
     const [userTypeStats] = await pool.execute(`
@@ -255,8 +294,8 @@ router.get('/overview', async (req, res) => {
 router.get('/analytics', async (req, res) => {
   try {
     console.log('Fetching analytics data for charts...');
-    const { year, month, day } = req.query;
-    const incidentDateFilter = buildDateFilter(year, month, day);
+    const { year } = req.query;
+    const incidentDateFilter = buildDateFilter(year);
     
     // Get incident trends with date filter
     const incidentTrendsQuery = incidentDateFilter.params.length > 0
@@ -282,17 +321,30 @@ router.get('/analytics', async (req, res) => {
       ? await pool.execute(incidentTrendsQuery, incidentDateFilter.params)
       : await pool.execute(incidentTrendsQuery);
 
-    // Get user registration trends for last 90 days
-    const [userTrends90Days] = await pool.execute(`
-      SELECT
-        DATE(created_at) as date,
-        COUNT(*) as count
-      FROM general_users
-      WHERE created_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)
-      AND status = 1
-      GROUP BY DATE(created_at)
-      ORDER BY date ASC
-    `);
+    // Get user registration trends with year filter
+    const userTrends90DaysQuery = incidentDateFilter.params.length > 0
+      ? `
+          SELECT
+            DATE(created_at) as date,
+            COUNT(*) as count
+          FROM general_users
+          WHERE YEAR(created_at) = ? AND status = 1
+          GROUP BY DATE(created_at)
+          ORDER BY date ASC
+        `
+      : `
+          SELECT
+            DATE(created_at) as date,
+            COUNT(*) as count
+          FROM general_users
+          WHERE created_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)
+          AND status = 1
+          GROUP BY DATE(created_at)
+          ORDER BY date ASC
+        `;
+    const [userTrends90Days] = incidentDateFilter.params.length > 0
+      ? await pool.execute(userTrends90DaysQuery, incidentDateFilter.params)
+      : await pool.execute(userTrends90DaysQuery);
 
     // Get incident status distribution with date filter
     const [incidentStatus] = incidentDateFilter.params.length > 0
@@ -449,8 +501,8 @@ router.get('/analytics', async (req, res) => {
 router.get('/location-incidents', async (req, res) => {
   try {
     console.log('Fetching location-based incident data...');
-    const { year, month, day } = req.query;
-    const incidentDateFilter = buildDateFilter(year, month, day);
+    const { year } = req.query;
+    const incidentDateFilter = buildDateFilter(year);
 
     // Get all incidents with their descriptions to extract barangay information
     const baseWhere = "WHERE description IS NOT NULL AND description != ''";
@@ -589,31 +641,16 @@ router.get('/monthly-trends', async (req, res) => {
   try {
     console.log('Fetching monthly incident trends...');
 
-    const { period = 'months', limit = 12, year, month, day } = req.query;
-    console.log(`Monthly trends request - Period: ${period}, Limit: ${limit}, Year: ${year}, Month: ${month}, Day: ${day}`);
+    const { period = 'months', limit = 12, year } = req.query;
+    console.log(`Monthly trends request - Period: ${period}, Limit: ${limit}, Year: ${year}`);
     let dateFormat, groupBy, dateFilter;
     let whereClause = '';
 
-    // Build date filter based on year/month/day if provided
+    // Build date filter based on year if provided
     let queryParams = [];
-    if (year || month || day) {
-      let dateParts = [];
-      if (year) {
-        dateParts.push(`YEAR(date_reported) = ?`);
-        queryParams.push(parseInt(year));
-      }
-      if (month) {
-        dateParts.push(`MONTH(date_reported) = ?`);
-        queryParams.push(parseInt(month));
-      }
-      if (day) {
-        dateParts.push(`DAY(date_reported) = ?`);
-        queryParams.push(parseInt(day));
-      }
-      
-      if (dateParts.length > 0) {
-        whereClause = `WHERE ${dateParts.join(' AND ')}`;
-      }
+    if (year) {
+      whereClause = `WHERE YEAR(date_reported) = ?`;
+      queryParams.push(parseInt(year));
     } else {
       // Use relative date filter if no specific date is provided
       switch (period) {
@@ -639,8 +676,8 @@ router.get('/monthly-trends', async (req, res) => {
       }
     }
 
-    // Set groupBy based on period if not using specific date filters
-    if (!year && !month && !day) {
+    // Set groupBy based on period if not using year filter
+    if (!year) {
       switch (period) {
         case 'days':
           groupBy = 'DATE(date_reported)';
@@ -654,19 +691,8 @@ router.get('/monthly-trends', async (req, res) => {
           break;
       }
     } else {
-      // If specific date filters are used, determine groupBy based on what's provided
-      if (day) {
-        // If day is specified, group by day (hourly or daily)
-        groupBy = 'DATE(date_reported)';
-      } else if (month) {
-        // If month is specified, group by day
-        groupBy = 'DATE(date_reported)';
-      } else if (year) {
-        // If only year is specified, group by month
-        groupBy = 'DATE_FORMAT(date_reported, "%Y-%m")';
-      } else {
-        groupBy = 'DATE_FORMAT(date_reported, "%Y-%m")';
-      }
+      // If year filter is used, group by month
+      groupBy = 'DATE_FORMAT(date_reported, "%Y-%m")';
     }
 
     const query = `
@@ -902,8 +928,8 @@ router.get('/response-time-individual', async (req, res) => {
   try {
     console.log('Fetching individual incident response times...');
 
-    const { limit = 200, period = 'months', last = 12, year, month, day } = req.query;
-    const incidentDateFilter = buildDateFilter(year, month, day);
+    const { limit = 200, period = 'months', last = 12, year } = req.query;
+    const incidentDateFilter = buildDateFilter(year);
     
     // Calculate date filter based on period and last
     const lastNum = parseInt(last) || (period === 'days' ? 7 : 12);
@@ -989,13 +1015,30 @@ router.get('/response-time-by-type', async (req, res) => {
   try {
     console.log('Fetching response time per incident type...');
 
-    const { period = 'months', last = 12 } = req.query;
+    const { period = 'months', last = 12, year } = req.query;
+    const incidentDateFilter = buildDateFilter(year);
     
     // Calculate date filter based on period and last
     const lastNum = parseInt(last) || (period === 'days' ? 7 : 12);
     const maxLimit = period === 'days' ? 30 : 24;
     const finalLastNum = Math.min(Math.max(lastNum, 1), maxLimit); // Ensure it's between 1 and max
     const intervalUnit = period === 'days' ? 'DAY' : 'MONTH';
+
+    // Build WHERE clause
+    let whereConditions = ["status != 'pending'", "updated_at > date_reported"];
+    let queryParams = [];
+    
+    if (incidentDateFilter.params.length > 0) {
+      // Use year filter if provided
+      whereConditions.push(incidentDateFilter.whereClause.replace('WHERE ', ''));
+      queryParams.push(...incidentDateFilter.params);
+    } else {
+      // Use relative date filter if no year provided
+      whereConditions.push(`date_reported >= DATE_SUB(NOW(), INTERVAL ? ${intervalUnit})`);
+      queryParams.push(finalLastNum);
+    }
+    
+    const whereClause = `WHERE ${whereConditions.join(' AND ')}`;
 
     // Calculate response time for incidents that have been responded to
     // Response time = time from date_reported to updated_at (when status changed from pending)
@@ -1012,13 +1055,11 @@ router.get('/response-time-by-type', async (req, res) => {
           ELSE NULL
         END) as avg_resolution_time_minutes
       FROM incident_reports
-      WHERE status != 'pending'
-        AND updated_at > date_reported
-        AND date_reported >= DATE_SUB(NOW(), INTERVAL ? ${intervalUnit})
+      ${whereClause}
       GROUP BY incident_type
       ORDER BY avg_response_time_minutes DESC
     `;
-    const [responseTimeData] = await pool.execute(query, [finalLastNum]);
+    const [responseTimeData] = await pool.execute(query, queryParams);
 
     // Format the response data
     const formattedData = responseTimeData.map(row => {
