@@ -255,17 +255,32 @@ router.get('/overview', async (req, res) => {
 router.get('/analytics', async (req, res) => {
   try {
     console.log('Fetching analytics data for charts...');
+    const { year, month, day } = req.query;
+    const incidentDateFilter = buildDateFilter(year, month, day);
     
-    // Get incident trends for last 30 days
-    const [incidentTrends30Days] = await pool.execute(`
-      SELECT
-        DATE(date_reported) as date,
-        COUNT(*) as count
-      FROM incident_reports
-      WHERE date_reported >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-      GROUP BY DATE(date_reported)
-      ORDER BY date ASC
-    `);
+    // Get incident trends with date filter
+    const incidentTrendsQuery = incidentDateFilter.params.length > 0
+      ? `
+          SELECT
+            DATE(date_reported) as date,
+            COUNT(*) as count
+          FROM incident_reports
+          ${incidentDateFilter.whereClause}
+          GROUP BY DATE(date_reported)
+          ORDER BY date ASC
+        `
+      : `
+          SELECT
+            DATE(date_reported) as date,
+            COUNT(*) as count
+          FROM incident_reports
+          WHERE date_reported >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+          GROUP BY DATE(date_reported)
+          ORDER BY date ASC
+        `;
+    const [incidentTrends30Days] = incidentDateFilter.params.length > 0
+      ? await pool.execute(incidentTrendsQuery, incidentDateFilter.params)
+      : await pool.execute(incidentTrendsQuery);
 
     // Get user registration trends for last 90 days
     const [userTrends90Days] = await pool.execute(`
