@@ -2,6 +2,30 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../config/conn');
 
+// Helper function to build date filter WHERE clause
+const buildDateFilter = (year, month, day) => {
+  const conditions = [];
+  const params = [];
+  
+  if (year) {
+    conditions.push('YEAR(date_reported) = ?');
+    params.push(parseInt(year));
+  }
+  if (month) {
+    conditions.push('MONTH(date_reported) = ?');
+    params.push(parseInt(month));
+  }
+  if (day) {
+    conditions.push('DAY(date_reported) = ?');
+    params.push(parseInt(day));
+  }
+  
+  return {
+    whereClause: conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '',
+    params
+  };
+};
+
 // Test route
 router.get('/test', (req, res) => {
   res.json({
@@ -14,8 +38,13 @@ router.get('/test', (req, res) => {
 router.get('/stats', async (req, res) => {
   try {
     console.log('Fetching dashboard statistics...');
+    const { year, month, day } = req.query;
     
-    // Get total counts
+    // Build date filter for incidents
+    const incidentDateFilter = buildDateFilter(year, month, day);
+    const incidentWhere = incidentDateFilter.whereClause ? `WHERE ${incidentDateFilter.whereClause.replace('WHERE ', '')}` : '';
+    
+    // Get total counts with date filters
     const [userStats] = await pool.execute(`
       SELECT
         COUNT(*) as total_users,
@@ -33,14 +62,24 @@ router.get('/stats', async (req, res) => {
       WHERE status = 1
     `);
 
-    const [incidentStats] = await pool.execute(`
-      SELECT
-        COUNT(*) as total_incidents,
-        SUM(CASE WHEN status = 'pending' OR status = 'in_progress' THEN 1 ELSE 0 END) as active_incidents,
-        SUM(CASE WHEN priority_level = 'high' OR priority_level = 'critical' THEN 1 ELSE 0 END) as high_priority_incidents,
-        SUM(CASE WHEN date_reported >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 ELSE 0 END) as incidents_this_week
-      FROM incident_reports
-    `);
+    const [incidentStats] = incidentDateFilter.params.length > 0
+      ? await pool.execute(`
+          SELECT
+            COUNT(*) as total_incidents,
+            SUM(CASE WHEN status = 'pending' OR status = 'in_progress' THEN 1 ELSE 0 END) as active_incidents,
+            SUM(CASE WHEN priority_level = 'high' OR priority_level = 'critical' THEN 1 ELSE 0 END) as high_priority_incidents,
+            SUM(CASE WHEN date_reported >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 ELSE 0 END) as incidents_this_week
+          FROM incident_reports
+          ${incidentDateFilter.whereClause}
+        `, incidentDateFilter.params)
+      : await pool.execute(`
+          SELECT
+            COUNT(*) as total_incidents,
+            SUM(CASE WHEN status = 'pending' OR status = 'in_progress' THEN 1 ELSE 0 END) as active_incidents,
+            SUM(CASE WHEN priority_level = 'high' OR priority_level = 'critical' THEN 1 ELSE 0 END) as high_priority_incidents,
+            SUM(CASE WHEN date_reported >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 ELSE 0 END) as incidents_this_week
+          FROM incident_reports
+        `);
 
     const [alertStats] = await pool.execute(`
       SELECT
@@ -50,31 +89,59 @@ router.get('/stats', async (req, res) => {
       FROM alerts
     `);
     
-    // Get recent activity (using incident reports as activity proxy)
-    const [recentActivity] = await pool.execute(`
-      SELECT
-        'incident_report' as action,
-        CONCAT('New incident: ', ir.incident_type) as details,
-        ir.date_reported as created_at,
-        'user' as user_type,
-        ir.reported_by as user_id,
-        CONCAT(gu.first_name, ' ', gu.last_name) as reporter_name
-      FROM incident_reports ir
-      LEFT JOIN general_users gu ON ir.reported_by = gu.user_id
-      ORDER BY ir.date_reported DESC
-      LIMIT 10
-    `);
+    // Get recent activity (using incident reports as activity proxy) with date filter
+    const [recentActivity] = incidentDateFilter.params.length > 0
+      ? await pool.execute(`
+          SELECT
+            'incident_report' as action,
+            CONCAT('New incident: ', ir.incident_type) as details,
+            ir.date_reported as created_at,
+            'user' as user_type,
+            ir.reported_by as user_id,
+            CONCAT(gu.first_name, ' ', gu.last_name) as reporter_name
+          FROM incident_reports ir
+          LEFT JOIN general_users gu ON ir.reported_by = gu.user_id
+          ${incidentDateFilter.whereClause.replace('date_reported', 'ir.date_reported')}
+          ORDER BY ir.date_reported DESC
+          LIMIT 10
+        `, incidentDateFilter.params)
+      : await pool.execute(`
+          SELECT
+            'incident_report' as action,
+            CONCAT('New incident: ', ir.incident_type) as details,
+            ir.date_reported as created_at,
+            'user' as user_type,
+            ir.reported_by as user_id,
+            CONCAT(gu.first_name, ' ', gu.last_name) as reporter_name
+          FROM incident_reports ir
+          LEFT JOIN general_users gu ON ir.reported_by = gu.user_id
+          ORDER BY ir.date_reported DESC
+          LIMIT 10
+        `);
 
-    // Get incident trends (last 7 days)
-    const [incidentTrends] = await pool.execute(`
-      SELECT
-        DATE(date_reported) as date,
-        COUNT(*) as count
-      FROM incident_reports
-      WHERE date_reported >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-      GROUP BY DATE(date_reported)
-      ORDER BY date ASC
-    `);
+    // Get incident trends with date filter
+    const incidentTrendsQuery = incidentDateFilter.params.length > 0
+      ? `
+          SELECT
+            DATE(date_reported) as date,
+            COUNT(*) as count
+          FROM incident_reports
+          ${incidentDateFilter.whereClause}
+          GROUP BY DATE(date_reported)
+          ORDER BY date ASC
+        `
+      : `
+          SELECT
+            DATE(date_reported) as date,
+            COUNT(*) as count
+          FROM incident_reports
+          WHERE date_reported >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+          GROUP BY DATE(date_reported)
+          ORDER BY date ASC
+        `;
+    const [incidentTrends] = incidentDateFilter.params.length > 0
+      ? await pool.execute(incidentTrendsQuery, incidentDateFilter.params)
+      : await pool.execute(incidentTrendsQuery);
 
     // Get user registration trends (last 30 days)
     const [userTrends] = await pool.execute(`
@@ -117,6 +184,8 @@ router.get('/stats', async (req, res) => {
 router.get('/overview', async (req, res) => {
   try {
     console.log('Fetching system overview...');
+    const { year, month, day } = req.query;
+    const incidentDateFilter = buildDateFilter(year, month, day);
     
     // Get user type distribution
     const [userTypeStats] = await pool.execute(`
@@ -127,13 +196,21 @@ router.get('/overview', async (req, res) => {
       ORDER BY user_count DESC
     `);
 
-    // Get incident types distribution
-    const [incidentTypes] = await pool.execute(`
-      SELECT incident_type, COUNT(*) as count
-      FROM incident_reports
-      GROUP BY incident_type
-      ORDER BY count DESC
-    `);
+    // Get incident types distribution with date filter
+    const [incidentTypes] = incidentDateFilter.params.length > 0
+      ? await pool.execute(`
+          SELECT incident_type, COUNT(*) as count
+          FROM incident_reports
+          ${incidentDateFilter.whereClause}
+          GROUP BY incident_type
+          ORDER BY count DESC
+        `, incidentDateFilter.params)
+      : await pool.execute(`
+          SELECT incident_type, COUNT(*) as count
+          FROM incident_reports
+          GROUP BY incident_type
+          ORDER BY count DESC
+        `);
 
     // Get alert types distribution
     const [alertTypes] = await pool.execute(`
@@ -202,25 +279,45 @@ router.get('/analytics', async (req, res) => {
       ORDER BY date ASC
     `);
 
-    // Get incident status distribution
-    const [incidentStatus] = await pool.execute(`
-      SELECT 
-        status,
-        COUNT(*) as count
-      FROM incident_reports
-      GROUP BY status
-      ORDER BY count DESC
-    `);
+    // Get incident status distribution with date filter
+    const [incidentStatus] = incidentDateFilter.params.length > 0
+      ? await pool.execute(`
+          SELECT 
+            status,
+            COUNT(*) as count
+          FROM incident_reports
+          ${incidentDateFilter.whereClause}
+          GROUP BY status
+          ORDER BY count DESC
+        `, incidentDateFilter.params)
+      : await pool.execute(`
+          SELECT 
+            status,
+            COUNT(*) as count
+          FROM incident_reports
+          GROUP BY status
+          ORDER BY count DESC
+        `);
 
-    // Get incident priority distribution
-    const [incidentPriority] = await pool.execute(`
-      SELECT 
-        priority_level as priority,
-        COUNT(*) as count
-      FROM incident_reports
-      GROUP BY priority_level
-      ORDER BY count DESC
-    `);
+    // Get incident priority distribution with date filter
+    const [incidentPriority] = incidentDateFilter.params.length > 0
+      ? await pool.execute(`
+          SELECT 
+            priority_level as priority,
+            COUNT(*) as count
+          FROM incident_reports
+          ${incidentDateFilter.whereClause}
+          GROUP BY priority_level
+          ORDER BY count DESC
+        `, incidentDateFilter.params)
+      : await pool.execute(`
+          SELECT 
+            priority_level as priority,
+            COUNT(*) as count
+          FROM incident_reports
+          GROUP BY priority_level
+          ORDER BY count DESC
+        `);
 
     // Get evacuation center occupancy rates
     const [evacuationOccupancy] = await pool.execute(`
@@ -235,42 +332,79 @@ router.get('/analytics', async (req, res) => {
       LIMIT 10
     `);
 
-    // Get monthly incident summary for last 12 months
-    const [monthlyIncidents] = await pool.execute(`
-      SELECT
-        DATE_FORMAT(date_reported, '%Y-%m') as month,
-        COUNT(*) as total_incidents,
-        SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved_incidents,
-        SUM(CASE WHEN priority_level = 'high' OR priority_level = 'critical' THEN 1 ELSE 0 END) as high_priority_incidents
-      FROM incident_reports
-      WHERE date_reported >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
-      GROUP BY DATE_FORMAT(date_reported, '%Y-%m')
-      ORDER BY month ASC
-    `);
+    // Get monthly incident summary with date filter
+    const monthlyIncidentsQuery = incidentDateFilter.params.length > 0
+      ? `
+          SELECT
+            DATE_FORMAT(date_reported, '%Y-%m') as month,
+            COUNT(*) as total_incidents,
+            SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved_incidents,
+            SUM(CASE WHEN priority_level = 'high' OR priority_level = 'critical' THEN 1 ELSE 0 END) as high_priority_incidents
+          FROM incident_reports
+          ${incidentDateFilter.whereClause}
+          GROUP BY DATE_FORMAT(date_reported, '%Y-%m')
+          ORDER BY month ASC
+        `
+      : `
+          SELECT
+            DATE_FORMAT(date_reported, '%Y-%m') as month,
+            COUNT(*) as total_incidents,
+            SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved_incidents,
+            SUM(CASE WHEN priority_level = 'high' OR priority_level = 'critical' THEN 1 ELSE 0 END) as high_priority_incidents
+          FROM incident_reports
+          WHERE date_reported >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
+          GROUP BY DATE_FORMAT(date_reported, '%Y-%m')
+          ORDER BY month ASC
+        `;
+    const [monthlyIncidents] = incidentDateFilter.params.length > 0
+      ? await pool.execute(monthlyIncidentsQuery, incidentDateFilter.params)
+      : await pool.execute(monthlyIncidentsQuery);
 
-    // Get peak hours analysis (incidents by hour of day) with consecutive dates and times
-    // Note: MIN/MAX should already match the hour bucket since we group by HOUR(date_reported)
-    // If there's a mismatch, it's likely a timezone conversion issue in the frontend
-    const [peakHoursData] = await pool.execute(`
-      SELECT
-        HOUR(date_reported) as hour,
-        COUNT(*) as incident_count,
-        MIN(date_reported) as earliest_datetime,
-        MAX(date_reported) as latest_datetime,
-        GROUP_CONCAT(
-          DISTINCT CONCAT(DATE(date_reported), ' ', TIME_FORMAT(date_reported, '%h:%i %p')) 
-          ORDER BY date_reported DESC 
-          LIMIT 5
-        ) as sample_datetimes,
-        GROUP_CONCAT(
-          DISTINCT DATE(date_reported) 
-          ORDER BY DATE(date_reported) ASC
-        ) as consecutive_dates
-      FROM incident_reports
-      WHERE date_reported >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-      GROUP BY HOUR(date_reported)
-      ORDER BY hour ASC
-    `);
+    // Get peak hours analysis with date filter
+    const peakHoursQuery = incidentDateFilter.params.length > 0
+      ? `
+          SELECT
+            HOUR(date_reported) as hour,
+            COUNT(*) as incident_count,
+            MIN(date_reported) as earliest_datetime,
+            MAX(date_reported) as latest_datetime,
+            GROUP_CONCAT(
+              DISTINCT CONCAT(DATE(date_reported), ' ', TIME_FORMAT(date_reported, '%h:%i %p')) 
+              ORDER BY date_reported DESC 
+              LIMIT 5
+            ) as sample_datetimes,
+            GROUP_CONCAT(
+              DISTINCT DATE(date_reported) 
+              ORDER BY DATE(date_reported) ASC
+            ) as consecutive_dates
+          FROM incident_reports
+          ${incidentDateFilter.whereClause}
+          GROUP BY HOUR(date_reported)
+          ORDER BY hour ASC
+        `
+      : `
+          SELECT
+            HOUR(date_reported) as hour,
+            COUNT(*) as incident_count,
+            MIN(date_reported) as earliest_datetime,
+            MAX(date_reported) as latest_datetime,
+            GROUP_CONCAT(
+              DISTINCT CONCAT(DATE(date_reported), ' ', TIME_FORMAT(date_reported, '%h:%i %p')) 
+              ORDER BY date_reported DESC 
+              LIMIT 5
+            ) as sample_datetimes,
+            GROUP_CONCAT(
+              DISTINCT DATE(date_reported) 
+              ORDER BY DATE(date_reported) ASC
+            ) as consecutive_dates
+          FROM incident_reports
+          WHERE date_reported >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+          GROUP BY HOUR(date_reported)
+          ORDER BY hour ASC
+        `;
+    const [peakHoursData] = incidentDateFilter.params.length > 0
+      ? await pool.execute(peakHoursQuery, incidentDateFilter.params)
+      : await pool.execute(peakHoursQuery);
 
     res.json({
       success: true,
@@ -300,22 +434,44 @@ router.get('/analytics', async (req, res) => {
 router.get('/location-incidents', async (req, res) => {
   try {
     console.log('Fetching location-based incident data...');
+    const { year, month, day } = req.query;
+    const incidentDateFilter = buildDateFilter(year, month, day);
 
     // Get all incidents with their descriptions to extract barangay information
-    const [incidentData] = await pool.execute(`
-      SELECT
-        incident_id,
-        incident_type,
-        description,
-        latitude,
-        longitude,
-        date_reported,
-        status,
-        priority_level
-      FROM incident_reports
-      WHERE description IS NOT NULL AND description != ''
-      ORDER BY date_reported DESC
-    `);
+    const baseWhere = "WHERE description IS NOT NULL AND description != ''";
+    const dateWhere = incidentDateFilter.whereClause 
+      ? `${baseWhere} AND ${incidentDateFilter.whereClause.replace('WHERE ', '')}`
+      : baseWhere;
+    
+    const [incidentData] = incidentDateFilter.params.length > 0
+      ? await pool.execute(`
+          SELECT
+            incident_id,
+            incident_type,
+            description,
+            latitude,
+            longitude,
+            date_reported,
+            status,
+            priority_level
+          FROM incident_reports
+          ${dateWhere}
+          ORDER BY date_reported DESC
+        `, incidentDateFilter.params)
+      : await pool.execute(`
+          SELECT
+            incident_id,
+            incident_type,
+            description,
+            latitude,
+            longitude,
+            date_reported,
+            status,
+            priority_level
+          FROM incident_reports
+          WHERE description IS NOT NULL AND description != ''
+          ORDER BY date_reported DESC
+        `);
 
     // Function to extract barangay name from description
     const extractBarangay = (description) => {
@@ -731,13 +887,30 @@ router.get('/response-time-individual', async (req, res) => {
   try {
     console.log('Fetching individual incident response times...');
 
-    const { limit = 200, period = 'months', last = 12 } = req.query;
+    const { limit = 200, period = 'months', last = 12, year, month, day } = req.query;
+    const incidentDateFilter = buildDateFilter(year, month, day);
     
     // Calculate date filter based on period and last
     const lastNum = parseInt(last) || (period === 'days' ? 7 : 12);
     const maxLimit = period === 'days' ? 30 : 24;
     const finalLastNum = Math.min(Math.max(lastNum, 1), maxLimit); // Ensure it's between 1 and max
     const intervalUnit = period === 'days' ? 'DAY' : 'MONTH';
+
+    // Build WHERE clause
+    let whereConditions = ["status != 'pending'", "updated_at > date_reported"];
+    let queryParams = [];
+    
+    if (incidentDateFilter.params.length > 0) {
+      // Use specific date filters if provided
+      whereConditions.push(incidentDateFilter.whereClause.replace('WHERE ', ''));
+      queryParams.push(...incidentDateFilter.params);
+    } else {
+      // Use relative date filter if no specific date provided
+      whereConditions.push(`date_reported >= DATE_SUB(NOW(), INTERVAL ? ${intervalUnit})`);
+      queryParams.push(finalLastNum);
+    }
+    
+    const whereClause = `WHERE ${whereConditions.join(' AND ')}`;
 
     // Get individual incidents with their response times
     const query = `
@@ -751,13 +924,11 @@ router.get('/response-time-individual', async (req, res) => {
         TIMESTAMPDIFF(HOUR, date_reported, updated_at) as response_time_hours,
         TIMESTAMPDIFF(DAY, date_reported, updated_at) as response_time_days
       FROM incident_reports
-      WHERE status != 'pending'
-        AND updated_at > date_reported
-        AND date_reported >= DATE_SUB(NOW(), INTERVAL ? ${intervalUnit})
+      ${whereClause}
       ORDER BY date_reported DESC
       LIMIT ?
     `;
-    const [incidentData] = await pool.execute(query, [finalLastNum, parseInt(limit)]);
+    const [incidentData] = await pool.execute(query, [...queryParams, parseInt(limit)]);
 
     // Format the response data
     const formattedData = incidentData.map(row => {
