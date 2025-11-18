@@ -467,9 +467,9 @@ router.get('/stats', authenticateAdmin, async (req, res) => {
     let settingsCount = 0;
     let activeSettingsCount = 0;
     try {
-      const [settingsResult] = await db.execute('SELECT COUNT(*) as total, SUM(is_active) as active FROM welfare_check_settings');
-      settingsCount = settingsResult[0].total || 0;
-      activeSettingsCount = settingsResult[0].active || 0;
+      const [settingsResult] = await db.execute('SELECT COUNT(*) as total, COALESCE(SUM(is_active), 0) as active FROM welfare_check_settings');
+      settingsCount = settingsResult[0]?.total || 0;
+      activeSettingsCount = parseInt(settingsResult[0]?.active || 0);
       
       // Get the active setting ID
       if (activeSettingsCount > 0) {
@@ -477,7 +477,7 @@ router.get('/stats', authenticateAdmin, async (req, res) => {
         activeSettingId = activeSetting[0]?.id || null;
       }
     } catch (settingsError) {
-      console.log('Welfare settings table does not exist or error occurred');
+      console.log('Welfare settings table does not exist or error occurred:', settingsError.message);
     }
 
     try {
@@ -632,8 +632,28 @@ router.get('/stats', authenticateAdmin, async (req, res) => {
         totalActiveUsers = [{ count: 0 }];
         recentReports = [];
       } else {
+        // Log the error details for debugging
+        console.error('Error in welfare stats query:', {
+          message: tableError.message,
+          code: tableError.code,
+          sqlState: tableError.sqlState,
+          sqlMessage: tableError.sqlMessage,
+          sql: tableError.sql
+        });
         throw tableError;
       }
+    }
+
+    // Ensure stats array has at least one element
+    if (!stats || !Array.isArray(stats) || stats.length === 0) {
+      stats = [{
+        total_reports: 0,
+        safe_reports: 0,
+        needs_help_reports: 0,
+        unique_users: 0,
+        first_report_date: null,
+        latest_report_date: null
+      }];
     }
 
     // Get counts from latest distribution
