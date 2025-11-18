@@ -785,13 +785,32 @@ router.get('/response-time-individual', async (req, res) => {
   try {
     console.log('Fetching individual incident response times...');
 
-    const { limit = 200, period = 'months', last = 12 } = req.query;
+    const { limit = 200, period = 'months', last = 12, year, month } = req.query;
     
-    // Calculate date filter based on period and last
-    const lastNum = parseInt(last) || (period === 'days' ? 7 : 12);
-    const maxLimit = period === 'days' ? 30 : 24;
-    const finalLastNum = Math.min(Math.max(lastNum, 1), maxLimit); // Ensure it's between 1 and max
-    const intervalUnit = period === 'days' ? 'DAY' : 'MONTH';
+    // Build date filter based on year/month or period/last
+    let dateFilter = '';
+    let queryParams = [];
+    
+    if (year && month) {
+      // Filter by specific year and month
+      const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+      dateFilter = `date_reported >= ? AND date_reported < DATE_ADD(?, INTERVAL 1 MONTH)`;
+      queryParams = [startDate, startDate];
+    } else if (year) {
+      // Filter by year only
+      const startDate = `${year}-01-01`;
+      const endDate = `${year}-12-31 23:59:59`;
+      dateFilter = `date_reported >= ? AND date_reported <= ?`;
+      queryParams = [startDate, endDate];
+    } else {
+      // Use period/last as before
+      const lastNum = parseInt(last) || (period === 'days' ? 7 : 12);
+      const maxLimit = period === 'days' ? 30 : 24;
+      const finalLastNum = Math.min(Math.max(lastNum, 1), maxLimit);
+      const intervalUnit = period === 'days' ? 'DAY' : 'MONTH';
+      dateFilter = `date_reported >= DATE_SUB(NOW(), INTERVAL ? ${intervalUnit})`;
+      queryParams = [finalLastNum];
+    }
 
     // Get individual incidents with their response times
     const query = `
@@ -807,11 +826,12 @@ router.get('/response-time-individual', async (req, res) => {
       FROM incident_reports
       WHERE status != 'pending'
         AND updated_at > date_reported
-        AND date_reported >= DATE_SUB(NOW(), INTERVAL ? ${intervalUnit})
+        AND ${dateFilter}
       ORDER BY date_reported DESC
       LIMIT ?
     `;
-    const [incidentData] = await pool.execute(query, [finalLastNum, parseInt(limit)]);
+    queryParams.push(parseInt(limit));
+    const [incidentData] = await pool.execute(query, queryParams);
 
     // Format the response data
     const formattedData = incidentData.map(row => {
@@ -857,13 +877,32 @@ router.get('/response-time-by-type', async (req, res) => {
   try {
     console.log('Fetching response time per incident type...');
 
-    const { period = 'months', last = 12 } = req.query;
+    const { period = 'months', last = 12, year, month } = req.query;
     
-    // Calculate date filter based on period and last
-    const lastNum = parseInt(last) || (period === 'days' ? 7 : 12);
-    const maxLimit = period === 'days' ? 30 : 24;
-    const finalLastNum = Math.min(Math.max(lastNum, 1), maxLimit); // Ensure it's between 1 and max
-    const intervalUnit = period === 'days' ? 'DAY' : 'MONTH';
+    // Build date filter based on year/month or period/last
+    let dateFilter = '';
+    let queryParams = [];
+    
+    if (year && month) {
+      // Filter by specific year and month
+      const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+      dateFilter = `date_reported >= ? AND date_reported < DATE_ADD(?, INTERVAL 1 MONTH)`;
+      queryParams = [startDate, startDate];
+    } else if (year) {
+      // Filter by year only
+      const startDate = `${year}-01-01`;
+      const endDate = `${year}-12-31 23:59:59`;
+      dateFilter = `date_reported >= ? AND date_reported <= ?`;
+      queryParams = [startDate, endDate];
+    } else {
+      // Use period/last as before
+      const lastNum = parseInt(last) || (period === 'days' ? 7 : 12);
+      const maxLimit = period === 'days' ? 30 : 24;
+      const finalLastNum = Math.min(Math.max(lastNum, 1), maxLimit);
+      const intervalUnit = period === 'days' ? 'DAY' : 'MONTH';
+      dateFilter = `date_reported >= DATE_SUB(NOW(), INTERVAL ? ${intervalUnit})`;
+      queryParams = [finalLastNum];
+    }
 
     // Calculate response time for incidents that have been responded to
     // Response time = time from date_reported to updated_at (when status changed from pending)
@@ -882,11 +921,11 @@ router.get('/response-time-by-type', async (req, res) => {
       FROM incident_reports
       WHERE status != 'pending'
         AND updated_at > date_reported
-        AND date_reported >= DATE_SUB(NOW(), INTERVAL ? ${intervalUnit})
+        AND ${dateFilter}
       GROUP BY incident_type
       ORDER BY avg_response_time_minutes DESC
     `;
-    const [responseTimeData] = await pool.execute(query, [finalLastNum]);
+    const [responseTimeData] = await pool.execute(query, queryParams);
 
     // Format the response data
     const formattedData = responseTimeData.map(row => {
