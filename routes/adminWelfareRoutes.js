@@ -554,22 +554,39 @@ router.get('/stats', authenticateAdmin, async (req, res) => {
         `, allParams);
       } else {
         // When no active setting, only use date params
-        // Subquery and main query use the same date params
-        const allParams = dateParams.length > 0 ? [...dateParams, ...dateParams] : [];
-        [latestDistribution] = await db.execute(`
-          SELECT 
-            wr.status,
-            COUNT(*) as count
-          FROM welfare_reports wr
-          INNER JOIN (
-            SELECT user_id, MAX(submitted_at) as max_submitted_at
-            FROM welfare_reports
-            WHERE 1=1 ${dateFilterSubquery}
-            GROUP BY user_id
-          ) latest ON wr.user_id = latest.user_id AND wr.submitted_at = latest.max_submitted_at
-          WHERE 1=1 ${dateFilter}
-          GROUP BY wr.status
-        `, allParams);
+        // Subquery and main query use the same date params, so we need to duplicate them
+        if (dateParams.length > 0) {
+          // Both subquery and main query need the same date params
+          const allParams = [...dateParams, ...dateParams];
+          [latestDistribution] = await db.execute(`
+            SELECT 
+              wr.status,
+              COUNT(*) as count
+            FROM welfare_reports wr
+            INNER JOIN (
+              SELECT user_id, MAX(submitted_at) as max_submitted_at
+              FROM welfare_reports
+              WHERE 1=1 ${dateFilterSubquery}
+              GROUP BY user_id
+            ) latest ON wr.user_id = latest.user_id AND wr.submitted_at = latest.max_submitted_at
+            WHERE 1=1 ${dateFilter}
+            GROUP BY wr.status
+          `, allParams);
+        } else {
+          // No date filter, no active setting - get all latest reports
+          [latestDistribution] = await db.execute(`
+            SELECT 
+              wr.status,
+              COUNT(*) as count
+            FROM welfare_reports wr
+            INNER JOIN (
+              SELECT user_id, MAX(submitted_at) as max_submitted_at
+              FROM welfare_reports
+              GROUP BY user_id
+            ) latest ON wr.user_id = latest.user_id AND wr.submitted_at = latest.max_submitted_at
+            GROUP BY wr.status
+          `);
+        }
       }
 
       // Get total active users
