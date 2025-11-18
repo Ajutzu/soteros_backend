@@ -43,20 +43,17 @@ router.get('/stats', async (req, res) => {
     
     // Build date filter for incidents (year required, month and day optional)
     const incidentDateFilter = buildDateFilter(year, month, day);
+    const incidentWhere = incidentDateFilter.whereClause ? `WHERE ${incidentDateFilter.whereClause.replace('WHERE ', '')}` : '';
     
-    // Build date filter for users and staff (year required, month and day optional)
-    const userDateFilter = buildDateFilter(year, month, day, 'created_at');
-    const staffDateFilter = buildDateFilter(year, month, day, 'created_at');
-    
-    // Get total counts with date filter
-    const userStatsQuery = userDateFilter.params.length > 0
+    // Get total counts with year filter
+    const userStatsQuery = incidentDateFilter.params.length > 0
       ? `
           SELECT
             COUNT(*) as total_users,
             SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) as active_users,
             SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN 1 ELSE 0 END) as new_users_month
           FROM general_users
-          WHERE status = 1 ${userDateFilter.whereClause.replace('WHERE', 'AND')}
+          WHERE status = 1 AND YEAR(created_at) = ?
         `
       : `
           SELECT
@@ -66,17 +63,17 @@ router.get('/stats', async (req, res) => {
           FROM general_users
           WHERE status = 1
         `;
-    const [userStats] = userDateFilter.params.length > 0
-      ? await pool.execute(userStatsQuery, userDateFilter.params)
+    const [userStats] = incidentDateFilter.params.length > 0
+      ? await pool.execute(userStatsQuery, incidentDateFilter.params)
       : await pool.execute(userStatsQuery);
 
-    const staffStatsQuery = staffDateFilter.params.length > 0
+    const staffStatsQuery = incidentDateFilter.params.length > 0
       ? `
           SELECT
             COUNT(*) as total_staff,
             SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) as active_staff
           FROM staff
-          WHERE status = 1 ${staffDateFilter.whereClause.replace('WHERE', 'AND')}
+          WHERE status = 1 AND YEAR(created_at) = ?
         `
       : `
           SELECT
@@ -85,8 +82,8 @@ router.get('/stats', async (req, res) => {
           FROM staff
           WHERE status = 1
         `;
-    const [staffStats] = staffDateFilter.params.length > 0
-      ? await pool.execute(staffStatsQuery, staffDateFilter.params)
+    const [staffStats] = incidentDateFilter.params.length > 0
+      ? await pool.execute(staffStatsQuery, incidentDateFilter.params)
       : await pool.execute(staffStatsQuery);
 
     const [incidentStats] = incidentDateFilter.params.length > 0
@@ -108,17 +105,14 @@ router.get('/stats', async (req, res) => {
           FROM incident_reports
         `);
 
-    // Build date filter for alerts (year required, month and day optional)
-    const alertDateFilter = buildDateFilter(year, month, day, 'created_at');
-    
-    const alertStatsQuery = alertDateFilter.params.length > 0
+    const alertStatsQuery = incidentDateFilter.params.length > 0
       ? `
           SELECT
             COUNT(*) as total_alerts,
             SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active_alerts,
             SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 ELSE 0 END) as alerts_this_week
           FROM alerts
-          ${alertDateFilter.whereClause}
+          WHERE YEAR(created_at) = ?
         `
       : `
           SELECT
@@ -127,8 +121,8 @@ router.get('/stats', async (req, res) => {
             SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 ELSE 0 END) as alerts_this_week
           FROM alerts
         `;
-    const [alertStats] = alertDateFilter.params.length > 0
-      ? await pool.execute(alertStatsQuery, alertDateFilter.params)
+    const [alertStats] = incidentDateFilter.params.length > 0
+      ? await pool.execute(alertStatsQuery, incidentDateFilter.params)
       : await pool.execute(alertStatsQuery);
     
     // Get recent activity (using incident reports as activity proxy) with date filter
@@ -185,14 +179,14 @@ router.get('/stats', async (req, res) => {
       ? await pool.execute(incidentTrendsQuery, incidentDateFilter.params)
       : await pool.execute(incidentTrendsQuery);
 
-    // Get user registration trends with date filter
-    const userTrendsQuery = userDateFilter.params.length > 0
+    // Get user registration trends with year filter
+    const userTrendsQuery = incidentDateFilter.params.length > 0
       ? `
           SELECT
             DATE(created_at) as date,
             COUNT(*) as count
           FROM general_users
-          WHERE status = 1 ${userDateFilter.whereClause.replace('WHERE', 'AND')}
+          WHERE YEAR(created_at) = ? AND status = 1
           GROUP BY DATE(created_at)
           ORDER BY date ASC
         `
@@ -206,8 +200,8 @@ router.get('/stats', async (req, res) => {
           GROUP BY DATE(created_at)
           ORDER BY date ASC
         `;
-    const [userTrends] = userDateFilter.params.length > 0
-      ? await pool.execute(userTrendsQuery, userDateFilter.params)
+    const [userTrends] = incidentDateFilter.params.length > 0
+      ? await pool.execute(userTrendsQuery, incidentDateFilter.params)
       : await pool.execute(userTrendsQuery);
     
     res.json({
@@ -337,17 +331,14 @@ router.get('/analytics', async (req, res) => {
       ? await pool.execute(incidentTrendsQuery, incidentDateFilter.params)
       : await pool.execute(incidentTrendsQuery);
 
-    // Build date filter for users (year required, month and day optional)
-    const userDateFilter = buildDateFilter(year, month, day, 'created_at');
-    
-    // Get user registration trends with date filter
-    const userTrends90DaysQuery = userDateFilter.params.length > 0
+    // Get user registration trends with year filter
+    const userTrends90DaysQuery = incidentDateFilter.params.length > 0
       ? `
           SELECT
             DATE(created_at) as date,
             COUNT(*) as count
           FROM general_users
-          WHERE status = 1 ${userDateFilter.whereClause.replace('WHERE', 'AND')}
+          WHERE YEAR(created_at) = ? AND status = 1
           GROUP BY DATE(created_at)
           ORDER BY date ASC
         `
@@ -361,8 +352,8 @@ router.get('/analytics', async (req, res) => {
           GROUP BY DATE(created_at)
           ORDER BY date ASC
         `;
-    const [userTrends90Days] = userDateFilter.params.length > 0
-      ? await pool.execute(userTrends90DaysQuery, userDateFilter.params)
+    const [userTrends90Days] = incidentDateFilter.params.length > 0
+      ? await pool.execute(userTrends90DaysQuery, incidentDateFilter.params)
       : await pool.execute(userTrends90DaysQuery);
 
     // Get incident status distribution with date filter
