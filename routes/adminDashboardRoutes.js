@@ -14,15 +14,39 @@ router.get('/test', (req, res) => {
 router.get('/stats', async (req, res) => {
   try {
     console.log('Fetching dashboard statistics...');
+    const { year, month } = req.query;
     
-    // Get total counts
+    // Build date filter conditions
+    let incidentDateFilter = '';
+    let alertDateFilter = '';
+    let userDateFilter = '';
+    let activityDateFilter = '';
+    
+    if (year && month) {
+      // Filter by specific year and month
+      const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+      incidentDateFilter = `AND date_reported >= '${startDate}' AND date_reported < DATE_ADD('${startDate}', INTERVAL 1 MONTH)`;
+      alertDateFilter = `AND created_at >= '${startDate}' AND created_at < DATE_ADD('${startDate}', INTERVAL 1 MONTH)`;
+      userDateFilter = `AND created_at >= '${startDate}' AND created_at < DATE_ADD('${startDate}', INTERVAL 1 MONTH)`;
+      activityDateFilter = `AND ir.date_reported >= '${startDate}' AND ir.date_reported < DATE_ADD('${startDate}', INTERVAL 1 MONTH)`;
+    } else if (year) {
+      // Filter by year only
+      const startDate = `${year}-01-01`;
+      const endDate = `${year}-12-31 23:59:59`;
+      incidentDateFilter = `AND date_reported >= '${startDate}' AND date_reported <= '${endDate}'`;
+      alertDateFilter = `AND created_at >= '${startDate}' AND created_at <= '${endDate}'`;
+      userDateFilter = `AND created_at >= '${startDate}' AND created_at <= '${endDate}'`;
+      activityDateFilter = `AND ir.date_reported >= '${startDate}' AND ir.date_reported <= '${endDate}'`;
+    }
+    
+    // Get total counts with date filters
     const [userStats] = await pool.execute(`
       SELECT
         COUNT(*) as total_users,
         SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) as active_users,
         SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN 1 ELSE 0 END) as new_users_month
       FROM general_users
-      WHERE status = 1
+      WHERE status = 1 ${userDateFilter}
     `);
 
     const [staffStats] = await pool.execute(`
@@ -40,6 +64,7 @@ router.get('/stats', async (req, res) => {
         SUM(CASE WHEN priority_level = 'high' OR priority_level = 'critical' THEN 1 ELSE 0 END) as high_priority_incidents,
         SUM(CASE WHEN date_reported >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 ELSE 0 END) as incidents_this_week
       FROM incident_reports
+      WHERE 1=1 ${incidentDateFilter}
     `);
 
     const [alertStats] = await pool.execute(`
@@ -48,6 +73,7 @@ router.get('/stats', async (req, res) => {
         SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active_alerts,
         SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 ELSE 0 END) as alerts_this_week
       FROM alerts
+      WHERE 1=1 ${alertDateFilter}
     `);
     
     // Get recent activity (using incident reports as activity proxy)
@@ -61,32 +87,38 @@ router.get('/stats', async (req, res) => {
         CONCAT(gu.first_name, ' ', gu.last_name) as reporter_name
       FROM incident_reports ir
       LEFT JOIN general_users gu ON ir.reported_by = gu.user_id
+      WHERE 1=1 ${activityDateFilter}
       ORDER BY ir.date_reported DESC
       LIMIT 10
     `);
 
-    // Get incident trends (last 7 days)
-    const [incidentTrends] = await pool.execute(`
+    // Get incident trends (last 7 days or filtered period)
+    let incidentTrendsQuery = `
       SELECT
         DATE(date_reported) as date,
         COUNT(*) as count
       FROM incident_reports
-      WHERE date_reported >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-      GROUP BY DATE(date_reported)
-      ORDER BY date ASC
-    `);
+      WHERE 1=1 ${incidentDateFilter}
+    `;
+    if (!year && !month) {
+      incidentTrendsQuery += ` AND date_reported >= DATE_SUB(NOW(), INTERVAL 7 DAY)`;
+    }
+    incidentTrendsQuery += ` GROUP BY DATE(date_reported) ORDER BY date ASC`;
+    const [incidentTrends] = await pool.execute(incidentTrendsQuery);
 
-    // Get user registration trends (last 30 days)
-    const [userTrends] = await pool.execute(`
+    // Get user registration trends (last 30 days or filtered period)
+    let userTrendsQuery = `
       SELECT
         DATE(created_at) as date,
         COUNT(*) as count
       FROM general_users
-      WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-      AND status = 1
-      GROUP BY DATE(created_at)
-      ORDER BY date ASC
-    `);
+      WHERE status = 1 ${userDateFilter}
+    `;
+    if (!year && !month) {
+      userTrendsQuery += ` AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)`;
+    }
+    userTrendsQuery += ` GROUP BY DATE(created_at) ORDER BY date ASC`;
+    const [userTrends] = await pool.execute(userTrendsQuery);
     
     res.json({
       success: true,
@@ -117,12 +149,31 @@ router.get('/stats', async (req, res) => {
 router.get('/overview', async (req, res) => {
   try {
     console.log('Fetching system overview...');
+    const { year, month } = req.query;
+    
+    // Build date filter conditions
+    let incidentDateFilter = '';
+    let alertDateFilter = '';
+    let userDateFilter = '';
+    
+    if (year && month) {
+      const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+      incidentDateFilter = `AND date_reported >= '${startDate}' AND date_reported < DATE_ADD('${startDate}', INTERVAL 1 MONTH)`;
+      alertDateFilter = `AND created_at >= '${startDate}' AND created_at < DATE_ADD('${startDate}', INTERVAL 1 MONTH)`;
+      userDateFilter = `AND created_at >= '${startDate}' AND created_at < DATE_ADD('${startDate}', INTERVAL 1 MONTH)`;
+    } else if (year) {
+      const startDate = `${year}-01-01`;
+      const endDate = `${year}-12-31 23:59:59`;
+      incidentDateFilter = `AND date_reported >= '${startDate}' AND date_reported <= '${endDate}'`;
+      alertDateFilter = `AND created_at >= '${startDate}' AND created_at <= '${endDate}'`;
+      userDateFilter = `AND created_at >= '${startDate}' AND created_at <= '${endDate}'`;
+    }
     
     // Get user type distribution
     const [userTypeStats] = await pool.execute(`
       SELECT user_type, COUNT(*) as user_count
       FROM general_users
-      WHERE status = 1
+      WHERE status = 1 ${userDateFilter}
       GROUP BY user_type
       ORDER BY user_count DESC
     `);
@@ -131,6 +182,7 @@ router.get('/overview', async (req, res) => {
     const [incidentTypes] = await pool.execute(`
       SELECT incident_type, COUNT(*) as count
       FROM incident_reports
+      WHERE 1=1 ${incidentDateFilter}
       GROUP BY incident_type
       ORDER BY count DESC
     `);
@@ -139,6 +191,7 @@ router.get('/overview', async (req, res) => {
     const [alertTypes] = await pool.execute(`
       SELECT alert_type, COUNT(*) as count
       FROM alerts
+      WHERE 1=1 ${alertDateFilter}
       GROUP BY alert_type
       ORDER BY count DESC
     `);
@@ -178,29 +231,50 @@ router.get('/overview', async (req, res) => {
 router.get('/analytics', async (req, res) => {
   try {
     console.log('Fetching analytics data for charts...');
+    const { year, month } = req.query;
     
-    // Get incident trends for last 30 days
-    const [incidentTrends30Days] = await pool.execute(`
+    // Build date filter conditions
+    let incidentDateFilter = '';
+    let userDateFilter = '';
+    
+    if (year && month) {
+      const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+      incidentDateFilter = `AND date_reported >= '${startDate}' AND date_reported < DATE_ADD('${startDate}', INTERVAL 1 MONTH)`;
+      userDateFilter = `AND created_at >= '${startDate}' AND created_at < DATE_ADD('${startDate}', INTERVAL 1 MONTH)`;
+    } else if (year) {
+      const startDate = `${year}-01-01`;
+      const endDate = `${year}-12-31 23:59:59`;
+      incidentDateFilter = `AND date_reported >= '${startDate}' AND date_reported <= '${endDate}'`;
+      userDateFilter = `AND created_at >= '${startDate}' AND created_at <= '${endDate}'`;
+    }
+    
+    // Get incident trends for last 30 days or filtered period
+    let incidentTrendsQuery = `
       SELECT
         DATE(date_reported) as date,
         COUNT(*) as count
       FROM incident_reports
-      WHERE date_reported >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-      GROUP BY DATE(date_reported)
-      ORDER BY date ASC
-    `);
+      WHERE 1=1 ${incidentDateFilter}
+    `;
+    if (!year && !month) {
+      incidentTrendsQuery += ` AND date_reported >= DATE_SUB(NOW(), INTERVAL 30 DAY)`;
+    }
+    incidentTrendsQuery += ` GROUP BY DATE(date_reported) ORDER BY date ASC`;
+    const [incidentTrends30Days] = await pool.execute(incidentTrendsQuery);
 
-    // Get user registration trends for last 90 days
-    const [userTrends90Days] = await pool.execute(`
+    // Get user registration trends for last 90 days or filtered period
+    let userTrendsQuery = `
       SELECT
         DATE(created_at) as date,
         COUNT(*) as count
       FROM general_users
-      WHERE created_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)
-      AND status = 1
-      GROUP BY DATE(created_at)
-      ORDER BY date ASC
-    `);
+      WHERE status = 1 ${userDateFilter}
+    `;
+    if (!year && !month) {
+      userTrendsQuery += ` AND created_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)`;
+    }
+    userTrendsQuery += ` GROUP BY DATE(created_at) ORDER BY date ASC`;
+    const [userTrends90Days] = await pool.execute(userTrendsQuery);
 
     // Get incident status distribution
     const [incidentStatus] = await pool.execute(`
@@ -208,6 +282,7 @@ router.get('/analytics', async (req, res) => {
         status,
         COUNT(*) as count
       FROM incident_reports
+      WHERE 1=1 ${incidentDateFilter}
       GROUP BY status
       ORDER BY count DESC
     `);
@@ -218,6 +293,7 @@ router.get('/analytics', async (req, res) => {
         priority_level as priority,
         COUNT(*) as count
       FROM incident_reports
+      WHERE 1=1 ${incidentDateFilter}
       GROUP BY priority_level
       ORDER BY count DESC
     `);
@@ -235,23 +311,26 @@ router.get('/analytics', async (req, res) => {
       LIMIT 10
     `);
 
-    // Get monthly incident summary for last 12 months
-    const [monthlyIncidents] = await pool.execute(`
+    // Get monthly incident summary for last 12 months or filtered period
+    let monthlyIncidentsQuery = `
       SELECT
         DATE_FORMAT(date_reported, '%Y-%m') as month,
         COUNT(*) as total_incidents,
         SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved_incidents,
         SUM(CASE WHEN priority_level = 'high' OR priority_level = 'critical' THEN 1 ELSE 0 END) as high_priority_incidents
       FROM incident_reports
-      WHERE date_reported >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
-      GROUP BY DATE_FORMAT(date_reported, '%Y-%m')
-      ORDER BY month ASC
-    `);
+      WHERE 1=1 ${incidentDateFilter}
+    `;
+    if (!year && !month) {
+      monthlyIncidentsQuery += ` AND date_reported >= DATE_SUB(NOW(), INTERVAL 12 MONTH)`;
+    }
+    monthlyIncidentsQuery += ` GROUP BY DATE_FORMAT(date_reported, '%Y-%m') ORDER BY month ASC`;
+    const [monthlyIncidents] = await pool.execute(monthlyIncidentsQuery);
 
     // Get peak hours analysis (incidents by hour of day) with consecutive dates and times
     // Note: MIN/MAX should already match the hour bucket since we group by HOUR(date_reported)
     // If there's a mismatch, it's likely a timezone conversion issue in the frontend
-    const [peakHoursData] = await pool.execute(`
+    let peakHoursQuery = `
       SELECT
         HOUR(date_reported) as hour,
         COUNT(*) as incident_count,
@@ -267,10 +346,13 @@ router.get('/analytics', async (req, res) => {
           ORDER BY DATE(date_reported) ASC
         ) as consecutive_dates
       FROM incident_reports
-      WHERE date_reported >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-      GROUP BY HOUR(date_reported)
-      ORDER BY hour ASC
-    `);
+      WHERE 1=1 ${incidentDateFilter}
+    `;
+    if (!year && !month) {
+      peakHoursQuery += ` AND date_reported >= DATE_SUB(NOW(), INTERVAL 30 DAY)`;
+    }
+    peakHoursQuery += ` GROUP BY HOUR(date_reported) ORDER BY hour ASC`;
+    const [peakHoursData] = await pool.execute(peakHoursQuery);
 
     res.json({
       success: true,
@@ -300,6 +382,18 @@ router.get('/analytics', async (req, res) => {
 router.get('/location-incidents', async (req, res) => {
   try {
     console.log('Fetching location-based incident data...');
+    const { year, month } = req.query;
+    
+    // Build date filter condition
+    let dateFilter = '';
+    if (year && month) {
+      const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+      dateFilter = `AND date_reported >= '${startDate}' AND date_reported < DATE_ADD('${startDate}', INTERVAL 1 MONTH)`;
+    } else if (year) {
+      const startDate = `${year}-01-01`;
+      const endDate = `${year}-12-31 23:59:59`;
+      dateFilter = `AND date_reported >= '${startDate}' AND date_reported <= '${endDate}'`;
+    }
 
     // Get all incidents with their descriptions to extract barangay information
     const [incidentData] = await pool.execute(`
@@ -313,7 +407,7 @@ router.get('/location-incidents', async (req, res) => {
         status,
         priority_level
       FROM incident_reports
-      WHERE description IS NOT NULL AND description != ''
+      WHERE description IS NOT NULL AND description != '' ${dateFilter}
       ORDER BY date_reported DESC
     `);
 
@@ -418,27 +512,47 @@ router.get('/monthly-trends', async (req, res) => {
   try {
     console.log('Fetching monthly incident trends...');
 
-    const { period = 'months', limit = 12 } = req.query;
-    console.log(`Monthly trends request - Period: ${period}, Limit: ${limit}`);
-    let dateFormat, groupBy, dateFilter;
+    const { period = 'months', limit = 12, year, month } = req.query;
+    console.log(`Monthly trends request - Period: ${period}, Limit: ${limit}, Year: ${year}, Month: ${month}`);
+    let dateFormat, groupBy;
 
-    switch (period) {
-      case 'days':
-        dateFormat = '%Y-%m-%d';
-        groupBy = 'DATE(date_reported)';
-        dateFilter = `DATE_SUB(NOW(), INTERVAL ${Math.min(parseInt(limit), 30)} DAY)`;
-        break;
-      case 'weeks':
-        dateFormat = '%Y-W%U';
-        groupBy = 'YEARWEEK(date_reported, 1)';
-        dateFilter = `DATE_SUB(NOW(), INTERVAL ${Math.min(parseInt(limit), 52)} WEEK)`;
-        break;
-      case 'months':
-      default:
-        dateFormat = '%Y-%m';
-        groupBy = 'DATE_FORMAT(date_reported, "%Y-%m")';
-        dateFilter = `DATE_SUB(NOW(), INTERVAL ${Math.min(parseInt(limit), 24)} MONTH)`;
-        break;
+    // Build date filter based on year/month or period/limit
+    let whereClause = '';
+    if (year && month) {
+      // Filter by specific year and month
+      const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+      whereClause = `date_reported >= '${startDate}' AND date_reported < DATE_ADD('${startDate}', INTERVAL 1 MONTH)`;
+      // Override period settings for year/month filter
+      dateFormat = '%Y-%m-%d';
+      groupBy = 'DATE(date_reported)';
+    } else if (year) {
+      // Filter by year only
+      const startDate = `${year}-01-01`;
+      const endDate = `${year}-12-31 23:59:59`;
+      whereClause = `date_reported >= '${startDate}' AND date_reported <= '${endDate}'`;
+      // Use months grouping for year view
+      dateFormat = '%Y-%m';
+      groupBy = 'DATE_FORMAT(date_reported, "%Y-%m")';
+    } else {
+      // Use period/limit as before
+      switch (period) {
+        case 'days':
+          dateFormat = '%Y-%m-%d';
+          groupBy = 'DATE(date_reported)';
+          whereClause = `date_reported >= DATE_SUB(NOW(), INTERVAL ${Math.min(parseInt(limit), 30)} DAY)`;
+          break;
+        case 'weeks':
+          dateFormat = '%Y-W%U';
+          groupBy = 'YEARWEEK(date_reported, 1)';
+          whereClause = `date_reported >= DATE_SUB(NOW(), INTERVAL ${Math.min(parseInt(limit), 52)} WEEK)`;
+          break;
+        case 'months':
+        default:
+          dateFormat = '%Y-%m';
+          groupBy = 'DATE_FORMAT(date_reported, "%Y-%m")';
+          whereClause = `date_reported >= DATE_SUB(NOW(), INTERVAL ${Math.min(parseInt(limit), 24)} MONTH)`;
+          break;
+      }
     }
 
     const query = `
@@ -448,7 +562,7 @@ router.get('/monthly-trends', async (req, res) => {
         SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved_incidents,
         SUM(CASE WHEN priority_level = 'high' OR priority_level = 'critical' THEN 1 ELSE 0 END) as high_priority_incidents
       FROM incident_reports
-      WHERE date_reported >= ${dateFilter}
+      WHERE ${whereClause}
       GROUP BY ${groupBy}
       ORDER BY ${groupBy} ASC
     `;
