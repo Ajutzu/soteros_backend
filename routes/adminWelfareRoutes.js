@@ -457,7 +457,11 @@ router.get('/reports', authenticateAdmin, async (req, res) => {
 router.get('/stats', authenticateAdmin, async (req, res) => {
   try {
     const { year, month, day } = req.query;
-    let stats, recentReports, latestDistribution, totalActiveUsers, activeSettingId;
+    let stats = null;
+    let recentReports = [];
+    let latestDistribution = [];
+    let totalActiveUsers = [{ count: 0 }];
+    let activeSettingId = null;
     
     // Get settings count and active setting ID
     let settingsCount = 0;
@@ -497,6 +501,8 @@ router.get('/stats', authenticateAdmin, async (req, res) => {
       const dateFilter = dateConditions.length > 0 ? `AND ${dateConditions.join(' AND ')}` : '';
       const dateFilterSubquery = dateConditions.length > 0 ? `AND ${dateConditions.join(' AND ')}` : '';
       
+      console.log('Welfare stats query params:', { year, month, day, activeSettingId, dateParams: dateParams.length });
+      
       // Get total counts (filtered by active setting and date if exists)
       if (activeSettingId) {
         [stats] = await db.execute(`
@@ -526,8 +532,12 @@ router.get('/stats', authenticateAdmin, async (req, res) => {
 
       // Get latest welfare status distribution (latest report per user, filtered by active setting and date)
       if (activeSettingId) {
+        // Build parameters for subquery: [activeSettingId, ...dateParams]
         const subqueryParams = dateParams.length > 0 ? [activeSettingId, ...dateParams] : [activeSettingId];
+        // Build parameters for main query: [activeSettingId, ...dateParams]
         const mainParams = dateParams.length > 0 ? [activeSettingId, ...dateParams] : [activeSettingId];
+        // Combine all parameters: subquery params first, then main query params
+        const allParams = [...subqueryParams, ...mainParams];
         [latestDistribution] = await db.execute(`
           SELECT 
             wr.status,
@@ -541,10 +551,11 @@ router.get('/stats', authenticateAdmin, async (req, res) => {
           ) latest ON wr.user_id = latest.user_id AND wr.submitted_at = latest.max_submitted_at
           WHERE wr.setting_id = ? ${dateFilter}
           GROUP BY wr.status
-        `, [...subqueryParams, ...mainParams]);
+        `, allParams);
       } else {
-        const subqueryParams = dateParams;
-        const mainParams = dateParams;
+        // When no active setting, only use date params
+        // Subquery and main query use the same date params
+        const allParams = dateParams.length > 0 ? [...dateParams, ...dateParams] : [];
         [latestDistribution] = await db.execute(`
           SELECT 
             wr.status,
@@ -558,7 +569,7 @@ router.get('/stats', authenticateAdmin, async (req, res) => {
           ) latest ON wr.user_id = latest.user_id AND wr.submitted_at = latest.max_submitted_at
           WHERE 1=1 ${dateFilter}
           GROUP BY wr.status
-        `, [...subqueryParams, ...mainParams]);
+        `, allParams);
       }
 
       // Get total active users
@@ -609,34 +620,45 @@ router.get('/stats', authenticateAdmin, async (req, res) => {
     }
 
     // Get counts from latest distribution
-    const latestSafeCount = latestDistribution.find(d => d.status === 'safe')?.count || 0;
-    const latestNeedsHelpCount = latestDistribution.find(d => d.status === 'needs_help')?.count || 0;
+    const latestSafeCount = (latestDistribution || []).find(d => d.status === 'safe')?.count || 0;
+    const latestNeedsHelpCount = (latestDistribution || []).find(d => d.status === 'needs_help')?.count || 0;
     const usersWithReports = latestSafeCount + latestNeedsHelpCount;
-    const totalUsers = totalActiveUsers[0]?.count || 0;
-    const notSubmittedCount = totalUsers - usersWithReports;
+    const totalUsers = (totalActiveUsers && totalActiveUsers[0]) ? totalActiveUsers[0].count : 0;
+    const notSubmittedCount = Math.max(0, totalUsers - usersWithReports);
 
     res.json({
       success: true,
       stats: {
         totalSettings: settingsCount,
         activeSettings: activeSettingsCount,
-        totalReports: stats[0].total_reports || 0,
+        totalReports: stats[0]?.total_reports || 0,
         safeReports: latestSafeCount,
         needsHelpReports: latestNeedsHelpCount,
         notSubmitted: notSubmittedCount,
-        uniqueUsers: stats[0].unique_users || 0,
-        firstReportDate: stats[0].first_report_date,
-        latestReportDate: stats[0].latest_report_date
+        uniqueUsers: stats[0]?.unique_users || 0,
+        firstReportDate: stats[0]?.first_report_date || null,
+        latestReportDate: stats[0]?.latest_report_date || null
       },
-      recentReports
+      recentReports: recentReports || []
     });
 
   } catch (error) {
     console.error('Error fetching welfare check statistics:', error);
+    console.error('Error details:', {
+      message: error.message,
+      code: error.code,
+      sqlState: error.sqlState,
+      sqlMessage: error.sqlMessage
+    });
     res.status(500).json({
       success: false,
       message: 'Failed to fetch welfare check statistics',
-      error: error.message
+      error: error.message,
+      details: process.env.NODE_ENV === 'development' ? {
+        code: error.code,
+        sqlState: error.sqlState,
+        sqlMessage: error.sqlMessage
+      } : undefined
     });
   }
 });
