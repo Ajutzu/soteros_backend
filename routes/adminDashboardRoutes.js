@@ -418,27 +418,84 @@ router.get('/monthly-trends', async (req, res) => {
   try {
     console.log('Fetching monthly incident trends...');
 
-    const { period = 'months', limit = 12 } = req.query;
-    console.log(`Monthly trends request - Period: ${period}, Limit: ${limit}`);
+    const { period = 'months', limit = 12, year, month, day } = req.query;
+    console.log(`Monthly trends request - Period: ${period}, Limit: ${limit}, Year: ${year}, Month: ${month}, Day: ${day}`);
     let dateFormat, groupBy, dateFilter;
+    let whereClause = '';
 
-    switch (period) {
-      case 'days':
-        dateFormat = '%Y-%m-%d';
+    // Build date filter based on year/month/day if provided
+    let queryParams = [];
+    if (year || month || day) {
+      let dateParts = [];
+      if (year) {
+        dateParts.push(`YEAR(date_reported) = ?`);
+        queryParams.push(parseInt(year));
+      }
+      if (month) {
+        dateParts.push(`MONTH(date_reported) = ?`);
+        queryParams.push(parseInt(month));
+      }
+      if (day) {
+        dateParts.push(`DAY(date_reported) = ?`);
+        queryParams.push(parseInt(day));
+      }
+      
+      if (dateParts.length > 0) {
+        whereClause = `WHERE ${dateParts.join(' AND ')}`;
+      }
+    } else {
+      // Use relative date filter if no specific date is provided
+      switch (period) {
+        case 'days':
+          dateFormat = '%Y-%m-%d';
+          groupBy = 'DATE(date_reported)';
+          dateFilter = `DATE_SUB(NOW(), INTERVAL ${Math.min(parseInt(limit), 30)} DAY)`;
+          whereClause = `WHERE date_reported >= ${dateFilter}`;
+          break;
+        case 'weeks':
+          dateFormat = '%Y-W%U';
+          groupBy = 'YEARWEEK(date_reported, 1)';
+          dateFilter = `DATE_SUB(NOW(), INTERVAL ${Math.min(parseInt(limit), 52)} WEEK)`;
+          whereClause = `WHERE date_reported >= ${dateFilter}`;
+          break;
+        case 'months':
+        default:
+          dateFormat = '%Y-%m';
+          groupBy = 'DATE_FORMAT(date_reported, "%Y-%m")';
+          dateFilter = `DATE_SUB(NOW(), INTERVAL ${Math.min(parseInt(limit), 24)} MONTH)`;
+          whereClause = `WHERE date_reported >= ${dateFilter}`;
+          break;
+      }
+    }
+
+    // Set groupBy based on period if not using specific date filters
+    if (!year && !month && !day) {
+      switch (period) {
+        case 'days':
+          groupBy = 'DATE(date_reported)';
+          break;
+        case 'weeks':
+          groupBy = 'YEARWEEK(date_reported, 1)';
+          break;
+        case 'months':
+        default:
+          groupBy = 'DATE_FORMAT(date_reported, "%Y-%m")';
+          break;
+      }
+    } else {
+      // If specific date filters are used, determine groupBy based on what's provided
+      if (day) {
+        // If day is specified, group by day (hourly or daily)
         groupBy = 'DATE(date_reported)';
-        dateFilter = `DATE_SUB(NOW(), INTERVAL ${Math.min(parseInt(limit), 30)} DAY)`;
-        break;
-      case 'weeks':
-        dateFormat = '%Y-W%U';
-        groupBy = 'YEARWEEK(date_reported, 1)';
-        dateFilter = `DATE_SUB(NOW(), INTERVAL ${Math.min(parseInt(limit), 52)} WEEK)`;
-        break;
-      case 'months':
-      default:
-        dateFormat = '%Y-%m';
+      } else if (month) {
+        // If month is specified, group by day
+        groupBy = 'DATE(date_reported)';
+      } else if (year) {
+        // If only year is specified, group by month
         groupBy = 'DATE_FORMAT(date_reported, "%Y-%m")';
-        dateFilter = `DATE_SUB(NOW(), INTERVAL ${Math.min(parseInt(limit), 24)} MONTH)`;
-        break;
+      } else {
+        groupBy = 'DATE_FORMAT(date_reported, "%Y-%m")';
+      }
     }
 
     const query = `
@@ -448,13 +505,16 @@ router.get('/monthly-trends', async (req, res) => {
         SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved_incidents,
         SUM(CASE WHEN priority_level = 'high' OR priority_level = 'critical' THEN 1 ELSE 0 END) as high_priority_incidents
       FROM incident_reports
-      WHERE date_reported >= ${dateFilter}
+      ${whereClause}
       GROUP BY ${groupBy}
       ORDER BY ${groupBy} ASC
     `;
     
     console.log(`Executing query: ${query}`);
-    const [trendsData] = await pool.execute(query);
+    console.log(`Query params:`, queryParams);
+    const [trendsData] = queryParams.length > 0 
+      ? await pool.execute(query, queryParams)
+      : await pool.execute(query);
     console.log(`Raw trends data for ${period}:`, trendsData);
 
     // Format the response data with better period labels
