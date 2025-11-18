@@ -482,24 +482,30 @@ router.get('/stats', authenticateAdmin, async (req, res) => {
 
     try {
       // Build date filter conditions (year required, month and day optional)
-      const dateConditions = [];
       const dateParams = [];
       
+      // Build date conditions without alias (will add alias where needed)
+      const dateConditionsBase = [];
       if (year) {
-        dateConditions.push('YEAR(wr.submitted_at) = ?');
+        dateConditionsBase.push('YEAR(submitted_at) = ?');
         dateParams.push(parseInt(year));
       }
       if (month) {
-        dateConditions.push('MONTH(wr.submitted_at) = ?');
+        dateConditionsBase.push('MONTH(submitted_at) = ?');
         dateParams.push(parseInt(month));
       }
       if (day) {
-        dateConditions.push('DAY(wr.submitted_at) = ?');
+        dateConditionsBase.push('DAY(submitted_at) = ?');
         dateParams.push(parseInt(day));
       }
       
-      const dateFilter = dateConditions.length > 0 ? `AND ${dateConditions.join(' AND ')}` : '';
-      const dateFilterSubquery = dateConditions.length > 0 ? `AND ${dateConditions.join(' AND ')}` : '';
+      // For main query, add wr alias; for subquery, use wr2 alias or no alias
+      const dateFilter = dateConditionsBase.length > 0 
+        ? `AND ${dateConditionsBase.map(c => c.replace('submitted_at', 'wr.submitted_at')).join(' AND ')}` 
+        : '';
+      const dateFilterSubquery = dateConditionsBase.length > 0 
+        ? `AND ${dateConditionsBase.map(c => c.replace('submitted_at', 'wr2.submitted_at')).join(' AND ')}` 
+        : '';
       
       console.log('Welfare stats query params:', { year, month, day, activeSettingId, dateParams: dateParams.length });
       
@@ -545,8 +551,8 @@ router.get('/stats', authenticateAdmin, async (req, res) => {
           FROM welfare_reports wr
           INNER JOIN (
             SELECT user_id, MAX(submitted_at) as max_submitted_at
-            FROM welfare_reports
-            WHERE setting_id = ? ${dateFilterSubquery}
+            FROM welfare_reports wr2
+            WHERE wr2.setting_id = ? ${dateFilterSubquery.replace(/wr\./g, 'wr2.')}
             GROUP BY user_id
           ) latest ON wr.user_id = latest.user_id AND wr.submitted_at = latest.max_submitted_at
           WHERE wr.setting_id = ? ${dateFilter}
@@ -565,7 +571,7 @@ router.get('/stats', authenticateAdmin, async (req, res) => {
             FROM welfare_reports wr
             INNER JOIN (
               SELECT user_id, MAX(submitted_at) as max_submitted_at
-              FROM welfare_reports
+              FROM welfare_reports wr2
               WHERE 1=1 ${dateFilterSubquery}
               GROUP BY user_id
             ) latest ON wr.user_id = latest.user_id AND wr.submitted_at = latest.max_submitted_at
