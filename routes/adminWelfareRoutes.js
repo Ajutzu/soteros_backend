@@ -456,7 +456,7 @@ router.get('/reports', authenticateAdmin, async (req, res) => {
 // Get welfare check statistics (admin only) - alias for /stats
 router.get('/stats', authenticateAdmin, async (req, res) => {
   try {
-    const { year } = req.query;
+    const { year, month, day } = req.query;
     let stats, recentReports, latestDistribution, totalActiveUsers, activeSettingId;
     
     // Get settings count and active setting ID
@@ -477,11 +477,27 @@ router.get('/stats', authenticateAdmin, async (req, res) => {
     }
 
     try {
-      // Build year filter condition
-      const yearFilter = year ? 'AND YEAR(wr.submitted_at) = ?' : '';
-      const yearParam = year ? [parseInt(year)] : [];
+      // Build date filter conditions (year required, month and day optional)
+      const dateConditions = [];
+      const dateParams = [];
       
-      // Get total counts (filtered by active setting and year if exists)
+      if (year) {
+        dateConditions.push('YEAR(wr.submitted_at) = ?');
+        dateParams.push(parseInt(year));
+      }
+      if (month) {
+        dateConditions.push('MONTH(wr.submitted_at) = ?');
+        dateParams.push(parseInt(month));
+      }
+      if (day) {
+        dateConditions.push('DAY(wr.submitted_at) = ?');
+        dateParams.push(parseInt(day));
+      }
+      
+      const dateFilter = dateConditions.length > 0 ? `AND ${dateConditions.join(' AND ')}` : '';
+      const dateFilterSubquery = dateConditions.length > 0 ? `AND ${dateConditions.join(' AND ')}` : '';
+      
+      // Get total counts (filtered by active setting and date if exists)
       if (activeSettingId) {
         [stats] = await db.execute(`
           SELECT 
@@ -492,8 +508,8 @@ router.get('/stats', authenticateAdmin, async (req, res) => {
             DATE(MIN(submitted_at)) as first_report_date,
             DATE(MAX(submitted_at)) as latest_report_date
           FROM welfare_reports wr
-          WHERE wr.setting_id = ? ${yearFilter}
-        `, [activeSettingId, ...yearParam]);
+          WHERE wr.setting_id = ? ${dateFilter}
+        `, [activeSettingId, ...dateParams]);
       } else {
         [stats] = await db.execute(`
           SELECT 
@@ -504,14 +520,14 @@ router.get('/stats', authenticateAdmin, async (req, res) => {
             DATE(MIN(submitted_at)) as first_report_date,
             DATE(MAX(submitted_at)) as latest_report_date
           FROM welfare_reports wr
-          WHERE 1=1 ${yearFilter}
-        `, yearParam);
+          WHERE 1=1 ${dateFilter}
+        `, dateParams);
       }
 
-      // Get latest welfare status distribution (latest report per user, filtered by active setting and year)
+      // Get latest welfare status distribution (latest report per user, filtered by active setting and date)
       if (activeSettingId) {
-        const yearFilterSubquery = year ? 'AND YEAR(submitted_at) = ?' : '';
-        const yearParams = year ? [parseInt(year), parseInt(year)] : [];
+        const subqueryParams = dateParams.length > 0 ? [activeSettingId, ...dateParams] : [activeSettingId];
+        const mainParams = dateParams.length > 0 ? [activeSettingId, ...dateParams] : [activeSettingId];
         [latestDistribution] = await db.execute(`
           SELECT 
             wr.status,
@@ -520,15 +536,15 @@ router.get('/stats', authenticateAdmin, async (req, res) => {
           INNER JOIN (
             SELECT user_id, MAX(submitted_at) as max_submitted_at
             FROM welfare_reports
-            WHERE setting_id = ? ${yearFilterSubquery}
+            WHERE setting_id = ? ${dateFilterSubquery}
             GROUP BY user_id
           ) latest ON wr.user_id = latest.user_id AND wr.submitted_at = latest.max_submitted_at
-          WHERE wr.setting_id = ? ${yearFilter}
+          WHERE wr.setting_id = ? ${dateFilter}
           GROUP BY wr.status
-        `, [activeSettingId, ...yearParams, activeSettingId, ...yearParam]);
+        `, [...subqueryParams, ...mainParams]);
       } else {
-        const yearFilterSubquery = year ? 'AND YEAR(submitted_at) = ?' : '';
-        const yearParams = year ? [parseInt(year), parseInt(year)] : [];
+        const subqueryParams = dateParams;
+        const mainParams = dateParams;
         [latestDistribution] = await db.execute(`
           SELECT 
             wr.status,
@@ -537,12 +553,12 @@ router.get('/stats', authenticateAdmin, async (req, res) => {
           INNER JOIN (
             SELECT user_id, MAX(submitted_at) as max_submitted_at
             FROM welfare_reports
-            WHERE 1=1 ${yearFilterSubquery}
+            WHERE 1=1 ${dateFilterSubquery}
             GROUP BY user_id
           ) latest ON wr.user_id = latest.user_id AND wr.submitted_at = latest.max_submitted_at
-          WHERE 1=1 ${yearFilter}
+          WHERE 1=1 ${dateFilter}
           GROUP BY wr.status
-        `, yearParams);
+        `, [...subqueryParams, ...mainParams]);
       }
 
       // Get total active users
@@ -552,28 +568,25 @@ router.get('/stats', authenticateAdmin, async (req, res) => {
         WHERE status = 1
       `);
 
-      // Get recent reports (filtered by active setting and year if exists)
-      const yearFilterReports = year ? 'AND YEAR(wr.submitted_at) = ?' : '';
-      const yearParamReports = year ? [parseInt(year)] : [];
-      
+      // Get recent reports (filtered by active setting and date if exists)
       if (activeSettingId) {
         [recentReports] = await db.execute(`
           SELECT wr.status, wr.submitted_at, gu.first_name, gu.last_name
           FROM welfare_reports wr
           JOIN general_users gu ON wr.user_id = gu.user_id
-          WHERE wr.setting_id = ? ${yearFilterReports}
+          WHERE wr.setting_id = ? ${dateFilter}
           ORDER BY wr.submitted_at DESC
           LIMIT 10
-        `, [activeSettingId, ...yearParamReports]);
+        `, [activeSettingId, ...dateParams]);
       } else {
         [recentReports] = await db.execute(`
           SELECT wr.status, wr.submitted_at, gu.first_name, gu.last_name
           FROM welfare_reports wr
           JOIN general_users gu ON wr.user_id = gu.user_id
-          WHERE 1=1 ${yearFilterReports}
+          WHERE 1=1 ${dateFilter}
           ORDER BY wr.submitted_at DESC
           LIMIT 10
-        `, yearParamReports);
+        `, dateParams);
       }
     } catch (tableError) {
       // If table doesn't exist, return empty statistics
