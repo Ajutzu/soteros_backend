@@ -653,15 +653,24 @@ router.get('/monthly-trends', async (req, res) => {
 
     const { period = 'months', limit = 12, year, month, day } = req.query;
     console.log(`Monthly trends request - Period: ${period}, Limit: ${limit}, Year: ${year}, Month: ${month}, Day: ${day}`);
+    
+    // Normalize month and day - handle string "0" or undefined
+    const monthNum = (month && month !== '0' && month !== 'undefined') ? parseInt(month) : null;
+    const dayNum = (day && day !== '0' && day !== 'undefined') ? parseInt(day) : null;
+    
+    console.log(`Parsed values - Year: ${year}, Month: ${monthNum}, Day: ${dayNum}`);
+    
     let dateFormat, groupBy, dateFilter;
     let whereClause = '';
 
     // Build date filter based on year (required), month and day (optional)
     let queryParams = [];
     if (year) {
-      const dateFilterObj = buildDateFilter(year, month, day);
+      // Only pass month and day if they are valid numbers (not 0, not undefined)
+      const dateFilterObj = buildDateFilter(year, monthNum, dayNum);
       whereClause = dateFilterObj.whereClause;
       queryParams = dateFilterObj.params;
+      console.log(`Date filter - WHERE: ${whereClause}, Params:`, queryParams);
     } else {
       // Use relative date filter if no specific date is provided
       switch (period) {
@@ -688,6 +697,9 @@ router.get('/monthly-trends', async (req, res) => {
     }
 
     // Set groupBy based on period and date filters
+    let query;
+    let trendsData;
+    
     if (!year) {
       // No date filter - use period parameter
       switch (period) {
@@ -702,51 +714,115 @@ router.get('/monthly-trends', async (req, res) => {
           groupBy = 'DATE_FORMAT(date_reported, "%Y-%m")';
           break;
       }
+      
+      query = `
+        SELECT
+          ${groupBy} as period,
+          COUNT(*) as total_incidents,
+          SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved_incidents,
+          SUM(CASE WHEN priority_level = 'high' OR priority_level = 'critical' THEN 1 ELSE 0 END) as high_priority_incidents
+        FROM incident_reports
+        ${whereClause}
+        GROUP BY ${groupBy}
+        ORDER BY ${groupBy} ASC
+      `;
+      
+      console.log(`Executing query: ${query}`);
+      trendsData = await pool.execute(query);
     } else {
       // Date filter is used - determine grouping based on month/day filters
-      const monthNum = month ? parseInt(month) : null;
-      const dayNum = day ? parseInt(day) : null;
-      
-      if (monthNum && monthNum > 0) {
-        // If month is specified (and valid), group by day within that month
+      if (monthNum && monthNum > 0 && !dayNum) {
+        // If month is specified but no specific day (All Days) - show only days with incidents
+        console.log('Grouping by day (month filter applied - showing days with incidents only)');
+        
+        // Use standard query that only returns days with incidents
         groupBy = 'DATE(date_reported)';
-      } else if (dayNum && dayNum > 0) {
-        // If day is specified (without month), group by day (shouldn't happen, but handle it)
+        const dateFilterObj = buildDateFilter(year, monthNum, null);
+        whereClause = dateFilterObj.whereClause;
+        queryParams = dateFilterObj.params;
+        
+        query = `
+          SELECT
+            ${groupBy} as period,
+            COUNT(*) as total_incidents,
+            SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved_incidents,
+            SUM(CASE WHEN priority_level = 'high' OR priority_level = 'critical' THEN 1 ELSE 0 END) as high_priority_incidents
+          FROM incident_reports
+          ${whereClause}
+          GROUP BY ${groupBy}
+          ORDER BY ${groupBy} ASC
+        `;
+        
+        console.log(`Executing query: ${query}`);
+        console.log(`Query params:`, queryParams);
+        [trendsData] = await pool.execute(query, queryParams);
+      } else if (monthNum && monthNum > 0 && dayNum) {
+        // If specific day is selected
         groupBy = 'DATE(date_reported)';
+        const dateFilterObj = buildDateFilter(year, monthNum, dayNum);
+        whereClause = dateFilterObj.whereClause;
+        queryParams = dateFilterObj.params;
+        
+        query = `
+          SELECT
+            ${groupBy} as period,
+            COUNT(*) as total_incidents,
+            SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved_incidents,
+            SUM(CASE WHEN priority_level = 'high' OR priority_level = 'critical' THEN 1 ELSE 0 END) as high_priority_incidents
+          FROM incident_reports
+          ${whereClause}
+          GROUP BY ${groupBy}
+          ORDER BY ${groupBy} ASC
+        `;
+        
+        console.log(`Executing query: ${query}`);
+        console.log(`Query params:`, queryParams);
+        [trendsData] = queryParams.length > 0 
+          ? await pool.execute(query, queryParams)
+          : await pool.execute(query);
       } else {
         // If only year is specified, group by month
         groupBy = 'DATE_FORMAT(date_reported, "%Y-%m")';
+        console.log('Grouping by month (year only)');
+        
+        query = `
+          SELECT
+            ${groupBy} as period,
+            COUNT(*) as total_incidents,
+            SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved_incidents,
+            SUM(CASE WHEN priority_level = 'high' OR priority_level = 'critical' THEN 1 ELSE 0 END) as high_priority_incidents
+          FROM incident_reports
+          ${whereClause}
+          GROUP BY ${groupBy}
+          ORDER BY ${groupBy} ASC
+        `;
+        
+        console.log(`Executing query: ${query}`);
+        console.log(`Query params:`, queryParams);
+        [trendsData] = queryParams.length > 0 
+          ? await pool.execute(query, queryParams)
+          : await pool.execute(query);
       }
     }
-
-    const query = `
-      SELECT
-        ${groupBy} as period,
-        COUNT(*) as total_incidents,
-        SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved_incidents,
-        SUM(CASE WHEN priority_level = 'high' OR priority_level = 'critical' THEN 1 ELSE 0 END) as high_priority_incidents
-      FROM incident_reports
-      ${whereClause}
-      GROUP BY ${groupBy}
-      ORDER BY ${groupBy} ASC
-    `;
     
-    console.log(`Executing query: ${query}`);
-    console.log(`Query params:`, queryParams);
-    const [trendsData] = queryParams.length > 0 
-      ? await pool.execute(query, queryParams)
-      : await pool.execute(query);
     console.log(`Raw trends data for ${period}:`, trendsData);
+    console.log(`Number of rows returned: ${trendsData.length}`);
+    
+    if (trendsData.length === 0) {
+      console.warn('No trends data returned for the specified filters');
+    }
 
     // Format the response data with better period labels
     const formattedData = trendsData.map(row => {
       let formattedPeriod = row.period;
       
       // Determine if we're showing daily data (based on month filter or period parameter)
-      const monthNum = month ? parseInt(month) : null;
+      // Use the normalized monthNum we calculated earlier
       const isDailyGrouping = (monthNum && monthNum > 0) || period === 'days';
       const isWeeklyGrouping = period === 'weeks';
       const isMonthlyGrouping = !isDailyGrouping && !isWeeklyGrouping;
+      
+      console.log(`Formatting period: ${row.period}, isDaily: ${isDailyGrouping}, isWeekly: ${isWeeklyGrouping}, isMonthly: ${isMonthlyGrouping}`);
       
       // Format period labels for better readability
       if (isDailyGrouping) {
