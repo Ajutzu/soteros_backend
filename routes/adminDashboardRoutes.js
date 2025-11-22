@@ -739,14 +739,15 @@ router.get('/monthly-trends', async (req, res) => {
     const yearNumForDays = year ? parseInt(year) : null;
     
     // Check day parameter - it can be undefined, null, "0", 0, or empty string for "All Days"
+    // If day is not provided (undefined) or is "0", treat it as "All Days"
     let dayNumForDays = null;
-    if (day !== undefined && day !== null && day !== '' && day !== '0') {
-      dayNumForDays = parseInt(day);
-      if (isNaN(dayNumForDays) || dayNumForDays < 1) {
-        dayNumForDays = null; // Treat invalid values as "All Days"
+    if (day !== undefined && day !== null && day !== '' && day !== '0' && day !== 0) {
+      const parsedDay = parseInt(day);
+      if (!isNaN(parsedDay) && parsedDay > 0 && parsedDay <= 31) {
+        dayNumForDays = parsedDay; // Valid specific day
       }
     }
-    // If day is "0", undefined, null, or empty, dayNumForDays stays null (All Days)
+    // If day is "0", undefined, null, empty, or invalid, dayNumForDays stays null (All Days)
     
     let query;
     let finalQueryParams = [];
@@ -758,7 +759,7 @@ router.get('/monthly-trends', async (req, res) => {
     // isAllDays is true if day is not provided, is 0, or is null/undefined
     const isAllDays = dayNumForDays === null;
     
-    console.log(`DEBUG: month=${month}, monthNumForDays=${monthNumForDays}, year=${year}, yearNumForDays=${yearNumForDays}, day=${day}, dayNumForDays=${dayNumForDays}, isAllDays=${isAllDays}`);
+    console.log(`DEBUG: month=${month} (${typeof month}), monthNumForDays=${monthNumForDays}, year=${year} (${typeof year}), yearNumForDays=${yearNumForDays}, day=${day} (${typeof day}), dayNumForDays=${dayNumForDays}, isAllDays=${isAllDays}`);
     console.log(`DEBUG: hasValidMonth=${hasValidMonth}, hasValidYear=${hasValidYear}, shouldGenerate=${hasValidMonth && hasValidYear && isAllDays}`);
     
     // PRIORITY: If month is selected, always generate all days (unless specific day is selected)
@@ -822,19 +823,48 @@ router.get('/monthly-trends', async (req, res) => {
       finalQueryParams = [];
     } else {
       // Regular query for other cases (year only, or no date filter)
-      console.log(`Using regular query - groupBy: ${groupBy}, whereClause: ${whereClause}, month: ${monthNumForDays}, day: ${dayNumForDays}`);
-      query = `
-        SELECT
-          ${groupBy} as period,
-          COUNT(*) as total_incidents,
-          SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved_incidents,
-          SUM(CASE WHEN priority_level = 'high' OR priority_level = 'critical' THEN 1 ELSE 0 END) as high_priority_incidents
-        FROM incident_reports
-        ${whereClause}
-        GROUP BY ${groupBy}
-        ORDER BY ${groupBy} ASC
-      `;
-      finalQueryParams = queryParams;
+      // BUT: If month is selected, we should still try to generate all days
+      // This is a fallback in case the condition above didn't match
+      if (hasValidMonth && hasValidYear) {
+        console.log(`⚠ Fallback: Month detected but condition didn't match. Forcing all days generation.`);
+        const daysInMonth = new Date(yearNumForDays, monthNumForDays, 0).getDate();
+        let dateSelects = [];
+        for (let d = 1; d <= daysInMonth; d++) {
+          const monthStr = monthNumForDays.toString().padStart(2, '0');
+          const dayStr = d.toString().padStart(2, '0');
+          dateSelects.push(`SELECT '${yearNumForDays}-${monthStr}-${dayStr}' as period_date`);
+        }
+        
+        query = `
+          SELECT
+            ds.period_date as period,
+            COALESCE(COUNT(ir.incident_id), 0) as total_incidents,
+            COALESCE(SUM(CASE WHEN ir.status = 'resolved' THEN 1 ELSE 0 END), 0) as resolved_incidents,
+            COALESCE(SUM(CASE WHEN ir.priority_level = 'high' OR ir.priority_level = 'critical' THEN 1 ELSE 0 END), 0) as high_priority_incidents
+          FROM (
+            ${dateSelects.join(' UNION ALL ')}
+          ) ds
+          LEFT JOIN incident_reports ir ON DATE(ir.date_reported) = ds.period_date
+          GROUP BY ds.period_date
+          ORDER BY ds.period_date ASC
+        `;
+        finalQueryParams = [];
+        console.log(`Generated fallback query with ${dateSelects.length} days`);
+      } else {
+        console.log(`Using regular query - groupBy: ${groupBy}, whereClause: ${whereClause}, month: ${monthNumForDays}, day: ${dayNumForDays}`);
+        query = `
+          SELECT
+            ${groupBy} as period,
+            COUNT(*) as total_incidents,
+            SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved_incidents,
+            SUM(CASE WHEN priority_level = 'high' OR priority_level = 'critical' THEN 1 ELSE 0 END) as high_priority_incidents
+          FROM incident_reports
+          ${whereClause}
+          GROUP BY ${groupBy}
+          ORDER BY ${groupBy} ASC
+        `;
+        finalQueryParams = queryParams;
+      }
     }
     
     console.log(`Executing query: ${query}`);
