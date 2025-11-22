@@ -839,7 +839,19 @@ router.get('/monthly-trends', async (req, res) => {
     }
 
     // Format the response data with better period labels
-    const formattedData = trendsData.map(row => {
+    // First, check for duplicates before formatting
+    const periodCounts = {};
+    trendsData.forEach(row => {
+      const periodKey = String(row.period);
+      periodCounts[periodKey] = (periodCounts[periodKey] || 0) + 1;
+    });
+    
+    const duplicatePeriods = Object.entries(periodCounts).filter(([_, count]) => count > 1);
+    if (duplicatePeriods.length > 0) {
+      console.warn(`⚠️ WARNING: Found duplicate periods in raw data:`, duplicatePeriods);
+    }
+    
+    const formattedData = trendsData.map((row, index) => {
       let formattedPeriod = row.period;
       
       // Determine if we're showing daily data (based on month filter or period parameter)
@@ -848,7 +860,9 @@ router.get('/monthly-trends', async (req, res) => {
       const isWeeklyGrouping = period === 'weeks';
       const isMonthlyGrouping = !isDailyGrouping && !isWeeklyGrouping;
       
-      console.log(`Formatting period: ${row.period}, isDaily: ${isDailyGrouping}, isWeekly: ${isWeeklyGrouping}, isMonthly: ${isMonthlyGrouping}`);
+      if (index < 3) { // Only log first 3 to avoid spam
+        console.log(`Formatting period ${index + 1}: ${row.period}, isDaily: ${isDailyGrouping}, isWeekly: ${isWeeklyGrouping}, isMonthly: ${isMonthlyGrouping}`);
+      }
       
       // Format period labels for better readability
       if (isDailyGrouping) {
@@ -913,12 +927,21 @@ router.get('/monthly-trends', async (req, res) => {
       }
       
       return {
-        period: formattedPeriod,
+        period: String(row.period), // Keep original period (YYYY-MM-DD) for frontend to use
+        formattedPeriod: formattedPeriod, // Formatted version for display
         total_incidents: row.total_incidents,
         resolved_incidents: row.resolved_incidents,
         high_priority_incidents: row.high_priority_incidents
       };
     });
+    
+    // Final check - log unique periods in formatted data
+    const uniqueFormattedPeriods = [...new Set(formattedData.map(d => d.period))];
+    console.log(`Formatted data: ${formattedData.length} rows, ${uniqueFormattedPeriods.length} unique periods`);
+    if (formattedData.length !== uniqueFormattedPeriods.length) {
+      console.warn(`⚠️ WARNING: Formatted data has duplicate periods! ${formattedData.length} rows but only ${uniqueFormattedPeriods.length} unique periods.`);
+      console.warn(`Duplicate periods:`, formattedData.map(d => d.period).filter((p, i, arr) => arr.indexOf(p) !== i));
+    }
     
     console.log(`Formatted data for ${period}:`, formattedData);
 
