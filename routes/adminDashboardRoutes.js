@@ -828,6 +828,7 @@ router.get('/monthly-trends', async (req, res) => {
       ? await pool.execute(query, finalQueryParams)
       : await pool.execute(query);
     console.log(`Raw trends data for ${period}:`, trendsData);
+    console.log(`Total data points returned: ${trendsData.length}`);
 
     // Format the response data with better period labels
     const formattedData = trendsData.map(row => {
@@ -911,12 +912,24 @@ router.get('/monthly-trends', async (req, res) => {
     
     console.log(`Formatted data for ${period}:`, formattedData);
 
+    // Add helpful info about the data
+    let dataInfo = '';
+    if (monthNumForDays && monthNumForDays > 0 && yearNumForDays && isAllDays) {
+      const daysInMonth = new Date(yearNumForDays, monthNumForDays, 0).getDate();
+      dataInfo = `Showing all ${daysInMonth} days in ${new Date(yearNumForDays, monthNumForDays - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}. Total data points: ${formattedData.length}`;
+    } else if (monthNumForDays && monthNumForDays > 0 && yearNumForDays && dayNumForDays && dayNumForDays > 0) {
+      dataInfo = `Showing specific day ${dayNumForDays} in ${new Date(yearNumForDays, monthNumForDays - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}.`;
+    } else {
+      dataInfo = `Incident trends for the last ${limit} ${period}. Data grouped by ${period === 'days' ? 'days' : period === 'weeks' ? 'weeks' : 'months'}. Total data points: ${formattedData.length}`;
+    }
+    
     res.json({
       success: true,
       trendsData: formattedData,
       period: period,
       limit: parseInt(limit),
-      note: `Incident trends for the last ${limit} ${period}. Data grouped by ${period === 'days' ? 'days' : period === 'weeks' ? 'weeks' : 'months'}.`
+      totalDataPoints: formattedData.length,
+      note: dataInfo
     });
 
   } catch (error) {
