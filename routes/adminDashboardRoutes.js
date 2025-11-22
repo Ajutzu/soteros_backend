@@ -687,8 +687,9 @@ router.get('/monthly-trends', async (req, res) => {
       }
     }
 
-    // Set groupBy based on period if not using year filter
+    // Set groupBy based on period and date filters
     if (!year) {
+      // No date filter - use period parameter
       switch (period) {
         case 'days':
           groupBy = 'DATE(date_reported)';
@@ -702,8 +703,20 @@ router.get('/monthly-trends', async (req, res) => {
           break;
       }
     } else {
-      // If year filter is used, group by month
-      groupBy = 'DATE_FORMAT(date_reported, "%Y-%m")';
+      // Date filter is used - determine grouping based on month/day filters
+      const monthNum = month ? parseInt(month) : null;
+      const dayNum = day ? parseInt(day) : null;
+      
+      if (monthNum && monthNum > 0) {
+        // If month is specified (and valid), group by day within that month
+        groupBy = 'DATE(date_reported)';
+      } else if (dayNum && dayNum > 0) {
+        // If day is specified (without month), group by day (shouldn't happen, but handle it)
+        groupBy = 'DATE(date_reported)';
+      } else {
+        // If only year is specified, group by month
+        groupBy = 'DATE_FORMAT(date_reported, "%Y-%m")';
+      }
     }
 
     const query = `
@@ -729,8 +742,14 @@ router.get('/monthly-trends', async (req, res) => {
     const formattedData = trendsData.map(row => {
       let formattedPeriod = row.period;
       
+      // Determine if we're showing daily data (based on month filter or period parameter)
+      const monthNum = month ? parseInt(month) : null;
+      const isDailyGrouping = (monthNum && monthNum > 0) || period === 'days';
+      const isWeeklyGrouping = period === 'weeks';
+      const isMonthlyGrouping = !isDailyGrouping && !isWeeklyGrouping;
+      
       // Format period labels for better readability
-      if (period === 'days') {
+      if (isDailyGrouping) {
         // Convert YYYY-MM-DD to readable format
         try {
           // Handle both YYYY-MM-DD and YYYYMMDD formats
@@ -758,18 +777,37 @@ router.get('/monthly-trends', async (req, res) => {
           // Fallback if date parsing fails
           formattedPeriod = row.period;
         }
-      } else if (period === 'weeks') {
+      } else if (isWeeklyGrouping) {
         // Convert YYYYWW to "Week X, YYYY" format
         const year = Math.floor(row.period / 100);
         const week = row.period % 100;
         formattedPeriod = `Week ${week}, ${year}`;
-      } else if (period === 'months') {
-        // Convert YYYY-MM to readable format
-        const date = new Date(row.period + '-01');
-        formattedPeriod = date.toLocaleDateString('en-US', { 
-          month: 'long', 
-          year: 'numeric'
-        });
+      } else if (isMonthlyGrouping) {
+        // Convert YYYY-MM to readable format or handle if it's already a date string
+        try {
+          let periodStr = row.period.toString();
+          // Check if it's already in YYYY-MM format
+          if (periodStr.match(/^\d{4}-\d{2}$/)) {
+            const date = new Date(periodStr + '-01');
+            formattedPeriod = date.toLocaleDateString('en-US', { 
+              month: 'short', 
+              year: 'numeric'
+            });
+          } else {
+            // Try parsing as date string
+            const date = new Date(periodStr);
+            if (!isNaN(date.getTime())) {
+              formattedPeriod = date.toLocaleDateString('en-US', { 
+                month: 'short', 
+                year: 'numeric'
+              });
+            } else {
+              formattedPeriod = periodStr;
+            }
+          }
+        } catch (error) {
+          formattedPeriod = row.period;
+        }
       }
       
       return {
