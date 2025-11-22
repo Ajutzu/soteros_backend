@@ -655,10 +655,11 @@ router.get('/monthly-trends', async (req, res) => {
     console.log(`Monthly trends request - Period: ${period}, Limit: ${limit}, Year: ${year}, Month: ${month}, Day: ${day}`);
     
     // Normalize month and day - handle string "0" or undefined
-    const monthNum = (month && month !== '0' && month !== 'undefined') ? parseInt(month) : null;
-    const dayNum = (day && day !== '0' && day !== 'undefined') ? parseInt(day) : null;
+    const monthNum = (month && month !== '0' && month !== 'undefined' && month !== 'null') ? parseInt(month) : null;
+    const dayNum = (day && day !== '0' && day !== 'undefined' && day !== 'null') ? parseInt(day) : null;
     
     console.log(`Parsed values - Year: ${year}, Month: ${monthNum}, Day: ${dayNum}`);
+    console.log(`Raw query params - month: "${month}" (type: ${typeof month}), day: "${day}" (type: ${typeof day})`);
     
     let dateFormat, groupBy, dateFilter;
     let whereClause = '';
@@ -731,32 +732,56 @@ router.get('/monthly-trends', async (req, res) => {
       trendsData = await pool.execute(query);
     } else {
       // Date filter is used - determine grouping based on month/day filters
-      if (monthNum && monthNum > 0 && !dayNum) {
+      if (monthNum && monthNum > 0 && monthNum <= 12 && (!dayNum || dayNum === null)) {
         // If month is specified but no specific day (All Days) - show only days with incidents
-        console.log('Grouping by day (month filter applied - showing days with incidents only)');
+        console.log('✓ Grouping by day (month filter applied - showing days with incidents only)');
+        console.log(`Month selected: ${monthNum}, Year: ${year}, Day: ${dayNum} (should be null/undefined)`);
         
         // Use standard query that only returns days with incidents
-        groupBy = 'DATE(date_reported)';
+        // Explicitly use DATE() function to ensure proper daily grouping
         const dateFilterObj = buildDateFilter(year, monthNum, null);
         whereClause = dateFilterObj.whereClause;
         queryParams = dateFilterObj.params;
         
+        console.log(`Date filter - WHERE: ${whereClause}, Params:`, queryParams);
+        
+        // Use explicit DATE() function to ensure we get one row per day
         query = `
           SELECT
-            ${groupBy} as period,
+            DATE(date_reported) as period,
             COUNT(*) as total_incidents,
             SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved_incidents,
             SUM(CASE WHEN priority_level = 'high' OR priority_level = 'critical' THEN 1 ELSE 0 END) as high_priority_incidents
           FROM incident_reports
           ${whereClause}
-          GROUP BY ${groupBy}
-          ORDER BY ${groupBy} ASC
+          GROUP BY DATE(date_reported)
+          ORDER BY DATE(date_reported) ASC
         `;
         
         console.log(`Executing query: ${query}`);
         console.log(`Query params:`, queryParams);
-        [trendsData] = await pool.execute(query, queryParams);
-      } else if (monthNum && monthNum > 0 && dayNum) {
+        const [rawResults] = await pool.execute(query, queryParams);
+        trendsData = rawResults; // Ensure we're using the array directly
+        console.log(`Query executed. Raw results type:`, Array.isArray(rawResults) ? 'Array' : typeof rawResults);
+        console.log(`Rows returned: ${trendsData.length}`);
+        if (trendsData.length > 0) {
+          console.log(`Sample data (first 5 rows):`, trendsData.slice(0, 5));
+          // Verify the grouping is by day (should be YYYY-MM-DD format)
+          const firstPeriod = trendsData[0]?.period;
+          console.log(`First period value: "${firstPeriod}" (should be in YYYY-MM-DD format for daily grouping)`);
+          if (firstPeriod && !firstPeriod.match(/^\d{4}-\d{2}-\d{2}$/)) {
+            console.warn(`⚠️ WARNING: Period format "${firstPeriod}" doesn't match daily format (YYYY-MM-DD). Grouping might be incorrect!`);
+          }
+          // Log all unique periods to verify we have multiple days
+          const uniquePeriods = [...new Set(trendsData.map(r => r.period))];
+          console.log(`Unique periods found: ${uniquePeriods.length}`);
+          if (uniquePeriods.length < trendsData.length) {
+            console.warn(`⚠️ WARNING: Found duplicate periods! Expected ${trendsData.length} unique days but got ${uniquePeriods.length}`);
+          }
+        } else {
+          console.warn(`⚠️ No data returned for month ${monthNum}, year ${year}. Check if there are incidents in this period.`);
+        }
+      } else if (monthNum && monthNum > 0 && dayNum && dayNum > 0) {
         // If specific day is selected
         groupBy = 'DATE(date_reported)';
         const dateFilterObj = buildDateFilter(year, monthNum, dayNum);
