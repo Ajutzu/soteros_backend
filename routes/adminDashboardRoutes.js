@@ -9,16 +9,25 @@ const buildDateFilter = (year, month, day, dateColumn = 'date_reported') => {
   const params = [];
   
   if (year) {
-    conditions.push(`YEAR(${dateColumn}) = ?`);
-    params.push(parseInt(year));
+    const yearNum = parseInt(year);
+    if (!isNaN(yearNum) && yearNum > 0) {
+      conditions.push(`YEAR(${dateColumn}) = ?`);
+      params.push(yearNum);
+    }
   }
-  if (month) {
-    conditions.push(`MONTH(${dateColumn}) = ?`);
-    params.push(parseInt(month));
+  if (month !== undefined && month !== null) {
+    const monthNum = parseInt(month);
+    if (!isNaN(monthNum) && monthNum > 0 && monthNum <= 12) {
+      conditions.push(`MONTH(${dateColumn}) = ?`);
+      params.push(monthNum);
+    }
   }
-  if (day) {
-    conditions.push(`DAY(${dateColumn}) = ?`);
-    params.push(parseInt(day));
+  if (day !== undefined && day !== null) {
+    const dayNum = parseInt(day);
+    if (!isNaN(dayNum) && dayNum > 0 && dayNum <= 31) {
+      conditions.push(`DAY(${dateColumn}) = ?`);
+      params.push(dayNum);
+    }
   }
   
   return {
@@ -659,7 +668,10 @@ router.get('/monthly-trends', async (req, res) => {
     // Build date filter based on year (required), month and day (optional)
     let queryParams = [];
     if (year) {
-      const dateFilterObj = buildDateFilter(year, month, day);
+      // Only include month and day in filter if they are provided and > 0
+      const monthNum = month && parseInt(month) > 0 ? parseInt(month) : undefined;
+      const dayNum = day && parseInt(day) > 0 ? parseInt(day) : undefined;
+      const dateFilterObj = buildDateFilter(year, monthNum, dayNum);
       whereClause = dateFilterObj.whereClause;
       queryParams = dateFilterObj.params;
     } else {
@@ -704,8 +716,8 @@ router.get('/monthly-trends', async (req, res) => {
       }
     } else {
       // Date filter is used - determine grouping based on month/day filters
-      const monthNum = month ? parseInt(month) : null;
-      const dayNum = day ? parseInt(day) : null;
+      const monthNum = month && parseInt(month) > 0 ? parseInt(month) : null;
+      const dayNum = day && parseInt(day) > 0 ? parseInt(day) : null;
       
       if (monthNum && monthNum > 0) {
         // If month is specified (and valid), group by day within that month
