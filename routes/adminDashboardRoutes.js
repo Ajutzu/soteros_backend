@@ -737,7 +737,16 @@ router.get('/monthly-trends', async (req, res) => {
     // IMPORTANT: When month is selected, always generate all days (even if day = 0 or undefined for "All Days")
     const monthNumForDays = month ? parseInt(month) : null;
     const yearNumForDays = year ? parseInt(year) : null;
-    const dayNumForDays = day ? parseInt(day) : null;
+    
+    // Check day parameter - it can be undefined, null, "0", 0, or empty string for "All Days"
+    let dayNumForDays = null;
+    if (day !== undefined && day !== null && day !== '' && day !== '0') {
+      dayNumForDays = parseInt(day);
+      if (isNaN(dayNumForDays) || dayNumForDays < 1) {
+        dayNumForDays = null; // Treat invalid values as "All Days"
+      }
+    }
+    // If day is "0", undefined, null, or empty, dayNumForDays stays null (All Days)
     
     let query;
     let finalQueryParams = [];
@@ -746,8 +755,13 @@ router.get('/monthly-trends', async (req, res) => {
     // This works for both "All Days" (day = 0 or undefined) and specific day selection
     const hasValidMonth = monthNumForDays && monthNumForDays > 0 && monthNumForDays <= 12;
     const hasValidYear = yearNumForDays && !isNaN(yearNumForDays);
-    const isAllDays = !dayNumForDays || dayNumForDays === 0 || dayNumForDays < 1;
+    // isAllDays is true if day is not provided, is 0, or is null/undefined
+    const isAllDays = dayNumForDays === null;
     
+    console.log(`DEBUG: month=${month}, monthNumForDays=${monthNumForDays}, year=${year}, yearNumForDays=${yearNumForDays}, day=${day}, dayNumForDays=${dayNumForDays}, isAllDays=${isAllDays}`);
+    console.log(`DEBUG: hasValidMonth=${hasValidMonth}, hasValidYear=${hasValidYear}, shouldGenerate=${hasValidMonth && hasValidYear && isAllDays}`);
+    
+    // PRIORITY: If month is selected, always generate all days (unless specific day is selected)
     if (hasValidMonth && hasValidYear && isAllDays) {
       console.log(`✓ Month detected! Generating ALL days for month ${monthNumForDays}, year ${yearNumForDays} (All Days selected)`);
       // Generate all days in the selected month and LEFT JOIN with incidents
@@ -773,10 +787,11 @@ router.get('/monthly-trends', async (req, res) => {
         FROM (
           ${dateSelects.join(' UNION ALL ')}
         ) ds
-        LEFT JOIN incident_reports ir ON DATE(ir.date_reported) = DATE(ds.period_date)
+        LEFT JOIN incident_reports ir ON DATE(ir.date_reported) = ds.period_date
         GROUP BY ds.period_date
         ORDER BY ds.period_date ASC
       `;
+      console.log(`Generated query with ${dateSelects.length} days. First date: ${dateSelects[0]}, Last date: ${dateSelects[dateSelects.length - 1]}`);
       finalQueryParams = []; // No parameters needed since we're using string interpolation for dates
     } else if (monthNumForDays && monthNumForDays > 0 && monthNumForDays <= 12 && yearNumForDays && dayNumForDays && dayNumForDays > 0) {
       // Specific day selected - still generate all days but filter to that day
@@ -914,9 +929,17 @@ router.get('/monthly-trends', async (req, res) => {
 
     // Add helpful info about the data
     let dataInfo = '';
+    let expectedDays = null;
+    let allDaysGenerated = false;
+    
     if (monthNumForDays && monthNumForDays > 0 && yearNumForDays && isAllDays) {
       const daysInMonth = new Date(yearNumForDays, monthNumForDays, 0).getDate();
+      expectedDays = daysInMonth;
+      allDaysGenerated = formattedData.length === daysInMonth;
       dataInfo = `Showing all ${daysInMonth} days in ${new Date(yearNumForDays, monthNumForDays - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}. Total data points: ${formattedData.length}`;
+      if (!allDaysGenerated) {
+        dataInfo += ` ⚠ Expected ${daysInMonth} but got ${formattedData.length}`;
+      }
     } else if (monthNumForDays && monthNumForDays > 0 && yearNumForDays && dayNumForDays && dayNumForDays > 0) {
       dataInfo = `Showing specific day ${dayNumForDays} in ${new Date(yearNumForDays, monthNumForDays - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}.`;
     } else {
@@ -929,6 +952,8 @@ router.get('/monthly-trends', async (req, res) => {
       period: period,
       limit: parseInt(limit),
       totalDataPoints: formattedData.length,
+      expectedDays: expectedDays,
+      allDaysGenerated: allDaysGenerated,
       note: dataInfo
     });
 
