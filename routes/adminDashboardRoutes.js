@@ -707,18 +707,15 @@ router.get('/monthly-trends', async (req, res) => {
       const monthNum = month ? parseInt(month) : null;
       const dayNum = day ? parseInt(day) : null;
       
-      // IMPORTANT: When month is selected, ALWAYS group by day to show all days in that month
       if (monthNum && monthNum > 0) {
-        // If month is specified, always group by day within that month (to show 1-30/31)
+        // If month is specified (and valid), group by day within that month
         groupBy = 'DATE(date_reported)';
-        console.log(`[BACKEND] Month filter detected (${monthNum}) - grouping by DATE for daily breakdown`);
       } else if (dayNum && dayNum > 0) {
         // If day is specified (without month), group by day (shouldn't happen, but handle it)
         groupBy = 'DATE(date_reported)';
       } else {
-        // If only year is specified (no month), group by month
+        // If only year is specified, group by month
         groupBy = 'DATE_FORMAT(date_reported, "%Y-%m")';
-        console.log(`[BACKEND] Only year filter - grouping by month`);
       }
     }
 
@@ -734,24 +731,12 @@ router.get('/monthly-trends', async (req, res) => {
       ORDER BY ${groupBy} ASC
     `;
     
-    console.log(`[MONTHLY-TRENDS] Executing query: ${query}`);
-    console.log(`[MONTHLY-TRENDS] Query params:`, queryParams);
-    console.log(`[MONTHLY-TRENDS] GroupBy: ${groupBy}, Period: ${period}, Year: ${year}, Month: ${month}, Day: ${day}`);
+    console.log(`Executing query: ${query}`);
+    console.log(`Query params:`, queryParams);
     const [trendsData] = queryParams.length > 0 
       ? await pool.execute(query, queryParams)
       : await pool.execute(query);
-    console.log(`[MONTHLY-TRENDS] Raw trends data rows: ${trendsData.length}`);
-    console.log(`[MONTHLY-TRENDS] Sample raw data:`, trendsData.slice(0, 5));
-    
-    // Additional check: verify if grouping is correct
-    if (month && parseInt(month) > 0) {
-      console.log(`[MONTHLY-TRENDS] Month filter active (${month}) - should be grouping by DATE(date_reported)`);
-      console.log(`[MONTHLY-TRENDS] Actual groupBy value: ${groupBy}`);
-      if (trendsData.length > 0) {
-        console.log(`[MONTHLY-TRENDS] First row period type:`, typeof trendsData[0].period);
-        console.log(`[MONTHLY-TRENDS] First row period value:`, trendsData[0].period);
-      }
-    }
+    console.log(`Raw trends data for ${period}:`, trendsData);
 
     // Format the response data with better period labels
     const formattedData = trendsData.map(row => {
@@ -765,8 +750,7 @@ router.get('/monthly-trends', async (req, res) => {
       
       // Format period labels for better readability
       if (isDailyGrouping) {
-        // For daily grouping, keep YYYY-MM-DD format for LineChart to parse correctly
-        // The LineChart component will format it for display
+        // Convert YYYY-MM-DD to readable format
         try {
           // Handle both YYYY-MM-DD and YYYYMMDD formats
           let dateStr = row.period;
@@ -778,20 +762,19 @@ router.get('/monthly-trends', async (req, res) => {
             }
           }
           
-          // Ensure date is in YYYY-MM-DD format for LineChart parsing
           const date = new Date(dateStr);
           if (isNaN(date.getTime())) {
             // Fallback if date parsing fails
             formattedPeriod = row.period;
           } else {
-            // Keep YYYY-MM-DD format - LineChart will format it for display
-            const yearVal = date.getFullYear();
-            const monthVal = String(date.getMonth() + 1).padStart(2, '0');
-            const dayVal = String(date.getDate()).padStart(2, '0');
-            formattedPeriod = `${yearVal}-${monthVal}-${dayVal}`;
+            formattedPeriod = date.toLocaleDateString('en-US', { 
+              month: 'short', 
+              day: 'numeric',
+              year: 'numeric'
+            });
           }
         } catch (error) {
-          // Fallback if date parsing fails - keep original format
+          // Fallback if date parsing fails
           formattedPeriod = row.period;
         }
       } else if (isWeeklyGrouping) {
