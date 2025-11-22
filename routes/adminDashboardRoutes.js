@@ -731,22 +731,65 @@ router.get('/monthly-trends', async (req, res) => {
       }
     }
 
-    const query = `
-      SELECT
-        ${groupBy} as period,
-        COUNT(*) as total_incidents,
-        SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved_incidents,
-        SUM(CASE WHEN priority_level = 'high' OR priority_level = 'critical' THEN 1 ELSE 0 END) as high_priority_incidents
-      FROM incident_reports
-      ${whereClause}
-      GROUP BY ${groupBy}
-      ORDER BY ${groupBy} ASC
-    `;
+    // Check if we need to generate all days in a month (when month is selected)
+    const monthNum = month && parseInt(month) > 0 ? parseInt(month) : null;
+    const yearNum = year ? parseInt(year) : null;
+    
+    let query;
+    let finalQueryParams = [];
+    
+    if (monthNum && monthNum > 0 && yearNum) {
+      // Generate all days in the selected month and LEFT JOIN with incidents
+      // This ensures all days (1-30/31) appear in the chart, even with 0 incidents
+      const daysInMonth = new Date(yearNum, monthNum, 0).getDate(); // Get last day of month
+      
+      // Use a numbers table approach (works with all MySQL versions)
+      // Generate dates from 1 to daysInMonth
+      let dateUnionParts = [];
+      for (let day = 1; day <= daysInMonth; day++) {
+        dateUnionParts.push(`SELECT DATE(CONCAT(?, '-', LPAD(?, 2, '0'), '-', LPAD(?, 2, '0'))) as period_date`);
+      }
+      
+      query = `
+        SELECT
+          DATE_FORMAT(ds.period_date, '%Y-%m-%d') as period,
+          COALESCE(COUNT(ir.incident_id), 0) as total_incidents,
+          COALESCE(SUM(CASE WHEN ir.status = 'resolved' THEN 1 ELSE 0 END), 0) as resolved_incidents,
+          COALESCE(SUM(CASE WHEN ir.priority_level = 'high' OR ir.priority_level = 'critical' THEN 1 ELSE 0 END), 0) as high_priority_incidents
+        FROM (
+          ${dateUnionParts.join(' UNION ALL ')}
+        ) ds
+        LEFT JOIN incident_reports ir ON DATE(ir.date_reported) = ds.period_date
+          AND YEAR(ir.date_reported) = ? AND MONTH(ir.date_reported) = ?
+        GROUP BY ds.period_date
+        ORDER BY ds.period_date ASC
+      `;
+      // Parameters: year, month, day (repeated for each day), then year and month for the JOIN
+      finalQueryParams = [];
+      for (let day = 1; day <= daysInMonth; day++) {
+        finalQueryParams.push(yearNum, monthNum, day);
+      }
+      finalQueryParams.push(yearNum, monthNum);
+    } else {
+      // Regular query for other cases (year only, or no date filter)
+      query = `
+        SELECT
+          ${groupBy} as period,
+          COUNT(*) as total_incidents,
+          SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved_incidents,
+          SUM(CASE WHEN priority_level = 'high' OR priority_level = 'critical' THEN 1 ELSE 0 END) as high_priority_incidents
+        FROM incident_reports
+        ${whereClause}
+        GROUP BY ${groupBy}
+        ORDER BY ${groupBy} ASC
+      `;
+      finalQueryParams = queryParams;
+    }
     
     console.log(`Executing query: ${query}`);
-    console.log(`Query params:`, queryParams);
-    const [trendsData] = queryParams.length > 0 
-      ? await pool.execute(query, queryParams)
+    console.log(`Query params:`, finalQueryParams);
+    const [trendsData] = finalQueryParams.length > 0 
+      ? await pool.execute(query, finalQueryParams)
       : await pool.execute(query);
     console.log(`Raw trends data for ${period}:`, trendsData);
 
