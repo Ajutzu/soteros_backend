@@ -9,25 +9,16 @@ const buildDateFilter = (year, month, day, dateColumn = 'date_reported') => {
   const params = [];
   
   if (year) {
-    const yearNum = parseInt(year);
-    if (!isNaN(yearNum) && yearNum > 0) {
-      conditions.push(`YEAR(${dateColumn}) = ?`);
-      params.push(yearNum);
-    }
+    conditions.push(`YEAR(${dateColumn}) = ?`);
+    params.push(parseInt(year));
   }
-  if (month !== undefined && month !== null) {
-    const monthNum = parseInt(month);
-    if (!isNaN(monthNum) && monthNum > 0 && monthNum <= 12) {
-      conditions.push(`MONTH(${dateColumn}) = ?`);
-      params.push(monthNum);
-    }
+  if (month) {
+    conditions.push(`MONTH(${dateColumn}) = ?`);
+    params.push(parseInt(month));
   }
-  if (day !== undefined && day !== null) {
-    const dayNum = parseInt(day);
-    if (!isNaN(dayNum) && dayNum > 0 && dayNum <= 31) {
-      conditions.push(`DAY(${dateColumn}) = ?`);
-      params.push(dayNum);
-    }
+  if (day) {
+    conditions.push(`DAY(${dateColumn}) = ?`);
+    params.push(parseInt(day));
   }
   
   return {
@@ -662,17 +653,13 @@ router.get('/monthly-trends', async (req, res) => {
 
     const { period = 'months', limit = 12, year, month, day } = req.query;
     console.log(`Monthly trends request - Period: ${period}, Limit: ${limit}, Year: ${year}, Month: ${month}, Day: ${day}`);
-    console.log(`Month type: ${typeof month}, Month parsed: ${month ? parseInt(month) : 'null'}`);
     let dateFormat, groupBy, dateFilter;
     let whereClause = '';
 
     // Build date filter based on year (required), month and day (optional)
     let queryParams = [];
     if (year) {
-      // Only include month and day in filter if they are provided and > 0
-      const monthNum = month && parseInt(month) > 0 ? parseInt(month) : undefined;
-      const dayNum = day && parseInt(day) > 0 ? parseInt(day) : undefined;
-      const dateFilterObj = buildDateFilter(year, monthNum, dayNum);
+      const dateFilterObj = buildDateFilter(year, month, day);
       whereClause = dateFilterObj.whereClause;
       queryParams = dateFilterObj.params;
     } else {
@@ -717,8 +704,8 @@ router.get('/monthly-trends', async (req, res) => {
       }
     } else {
       // Date filter is used - determine grouping based on month/day filters
-      const monthNum = month && parseInt(month) > 0 ? parseInt(month) : null;
-      const dayNum = day && parseInt(day) > 0 ? parseInt(day) : null;
+      const monthNum = month ? parseInt(month) : null;
+      const dayNum = day ? parseInt(day) : null;
       
       if (monthNum && monthNum > 0) {
         // If month is specified (and valid), group by day within that month
@@ -732,148 +719,24 @@ router.get('/monthly-trends', async (req, res) => {
       }
     }
 
-    // Check if we need to generate all days in a month (when month is selected)
-    // Parse month and year for date generation
-    // IMPORTANT: When month is selected, always generate all days (even if day = 0 or undefined for "All Days")
-    const monthNumForDays = month ? parseInt(month) : null;
-    const yearNumForDays = year ? parseInt(year) : null;
-    
-    // Check day parameter - it can be undefined, null, "0", 0, or empty string for "All Days"
-    // If day is not provided (undefined) or is "0", treat it as "All Days"
-    let dayNumForDays = null;
-    if (day !== undefined && day !== null && day !== '' && day !== '0' && day !== 0) {
-      const parsedDay = parseInt(day);
-      if (!isNaN(parsedDay) && parsedDay > 0 && parsedDay <= 31) {
-        dayNumForDays = parsedDay; // Valid specific day
-      }
-    }
-    // If day is "0", undefined, null, empty, or invalid, dayNumForDays stays null (All Days)
-    
-    let query;
-    let finalQueryParams = [];
-    
-    // If month is selected (valid month 1-12), generate all days in that month
-    // This works for both "All Days" (day = 0 or undefined) and specific day selection
-    const hasValidMonth = monthNumForDays && monthNumForDays > 0 && monthNumForDays <= 12;
-    const hasValidYear = yearNumForDays && !isNaN(yearNumForDays);
-    // isAllDays is true if day is not provided, is 0, or is null/undefined
-    const isAllDays = dayNumForDays === null;
-    
-    console.log(`DEBUG: month=${month} (${typeof month}), monthNumForDays=${monthNumForDays}, year=${year} (${typeof year}), yearNumForDays=${yearNumForDays}, day=${day} (${typeof day}), dayNumForDays=${dayNumForDays}, isAllDays=${isAllDays}`);
-    console.log(`DEBUG: hasValidMonth=${hasValidMonth}, hasValidYear=${hasValidYear}, shouldGenerate=${hasValidMonth && hasValidYear && isAllDays}`);
-    
-    // PRIORITY: If month is selected, always generate all days (unless specific day is selected)
-    if (hasValidMonth && hasValidYear && isAllDays) {
-      console.log(`✓ Month detected! Generating ALL days for month ${monthNumForDays}, year ${yearNumForDays} (All Days selected)`);
-      // Generate all days in the selected month and LEFT JOIN with incidents
-      // This ensures all days (1-30/31) appear in the chart, even with 0 incidents
-      const daysInMonth = new Date(yearNumForDays, monthNumForDays, 0).getDate(); // Get last day of month
-      console.log(`Days in month: ${daysInMonth}`);
-      
-      // Build date series using a simpler approach with a temporary table or subquery
-      // Generate dates from 1 to daysInMonth using a numbers table approach
-      let dateSelects = [];
-      for (let day = 1; day <= daysInMonth; day++) {
-        const monthStr = monthNumForDays.toString().padStart(2, '0');
-        const dayStr = day.toString().padStart(2, '0');
-        dateSelects.push(`SELECT '${yearNumForDays}-${monthStr}-${dayStr}' as period_date`);
-      }
-      
-      query = `
-        SELECT
-          ds.period_date as period,
-          COALESCE(COUNT(ir.incident_id), 0) as total_incidents,
-          COALESCE(SUM(CASE WHEN ir.status = 'resolved' THEN 1 ELSE 0 END), 0) as resolved_incidents,
-          COALESCE(SUM(CASE WHEN ir.priority_level = 'high' OR ir.priority_level = 'critical' THEN 1 ELSE 0 END), 0) as high_priority_incidents
-        FROM (
-          ${dateSelects.join(' UNION ALL ')}
-        ) ds
-        LEFT JOIN incident_reports ir ON DATE(ir.date_reported) = ds.period_date
-        GROUP BY ds.period_date
-        ORDER BY ds.period_date ASC
-      `;
-      console.log(`Generated query with ${dateSelects.length} days. First date: ${dateSelects[0]}, Last date: ${dateSelects[dateSelects.length - 1]}`);
-      finalQueryParams = []; // No parameters needed since we're using string interpolation for dates
-    } else if (monthNumForDays && monthNumForDays > 0 && monthNumForDays <= 12 && yearNumForDays && dayNumForDays && dayNumForDays > 0) {
-      // Specific day selected - still generate all days but filter to that day
-      console.log(`✓ Specific day selected: ${dayNumForDays} in month ${monthNumForDays}, year ${yearNumForDays}`);
-      const daysInMonth = new Date(yearNumForDays, monthNumForDays, 0).getDate();
-      let dateSelects = [];
-      for (let d = 1; d <= daysInMonth; d++) {
-        const monthStr = monthNumForDays.toString().padStart(2, '0');
-        const dayStr = d.toString().padStart(2, '0');
-        dateSelects.push(`SELECT '${yearNumForDays}-${monthStr}-${dayStr}' as period_date`);
-      }
-      
-      query = `
-        SELECT
-          ds.period_date as period,
-          COALESCE(COUNT(ir.incident_id), 0) as total_incidents,
-          COALESCE(SUM(CASE WHEN ir.status = 'resolved' THEN 1 ELSE 0 END), 0) as resolved_incidents,
-          COALESCE(SUM(CASE WHEN ir.priority_level = 'high' OR ir.priority_level = 'critical' THEN 1 ELSE 0 END), 0) as high_priority_incidents
-        FROM (
-          ${dateSelects.join(' UNION ALL ')}
-        ) ds
-        LEFT JOIN incident_reports ir ON DATE(ir.date_reported) = DATE(ds.period_date)
-          AND YEAR(ir.date_reported) = ${yearNumForDays} AND MONTH(ir.date_reported) = ${monthNumForDays} AND DAY(ir.date_reported) = ${dayNumForDays}
-        WHERE DAY(ds.period_date) = ${dayNumForDays}
-        GROUP BY ds.period_date
-        ORDER BY ds.period_date ASC
-      `;
-      finalQueryParams = [];
-    } else {
-      // Regular query for other cases (year only, or no date filter)
-      // BUT: If month is selected, we should still try to generate all days
-      // This is a fallback in case the condition above didn't match
-      if (hasValidMonth && hasValidYear) {
-        console.log(`⚠ Fallback: Month detected but condition didn't match. Forcing all days generation.`);
-        const daysInMonth = new Date(yearNumForDays, monthNumForDays, 0).getDate();
-        let dateSelects = [];
-        for (let d = 1; d <= daysInMonth; d++) {
-          const monthStr = monthNumForDays.toString().padStart(2, '0');
-          const dayStr = d.toString().padStart(2, '0');
-          dateSelects.push(`SELECT '${yearNumForDays}-${monthStr}-${dayStr}' as period_date`);
-        }
-        
-        query = `
-          SELECT
-            ds.period_date as period,
-            COALESCE(COUNT(ir.incident_id), 0) as total_incidents,
-            COALESCE(SUM(CASE WHEN ir.status = 'resolved' THEN 1 ELSE 0 END), 0) as resolved_incidents,
-            COALESCE(SUM(CASE WHEN ir.priority_level = 'high' OR ir.priority_level = 'critical' THEN 1 ELSE 0 END), 0) as high_priority_incidents
-          FROM (
-            ${dateSelects.join(' UNION ALL ')}
-          ) ds
-          LEFT JOIN incident_reports ir ON DATE(ir.date_reported) = ds.period_date
-          GROUP BY ds.period_date
-          ORDER BY ds.period_date ASC
-        `;
-        finalQueryParams = [];
-        console.log(`Generated fallback query with ${dateSelects.length} days`);
-      } else {
-        console.log(`Using regular query - groupBy: ${groupBy}, whereClause: ${whereClause}, month: ${monthNumForDays}, day: ${dayNumForDays}`);
-        query = `
-          SELECT
-            ${groupBy} as period,
-            COUNT(*) as total_incidents,
-            SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved_incidents,
-            SUM(CASE WHEN priority_level = 'high' OR priority_level = 'critical' THEN 1 ELSE 0 END) as high_priority_incidents
-          FROM incident_reports
-          ${whereClause}
-          GROUP BY ${groupBy}
-          ORDER BY ${groupBy} ASC
-        `;
-        finalQueryParams = queryParams;
-      }
-    }
+    const query = `
+      SELECT
+        ${groupBy} as period,
+        COUNT(*) as total_incidents,
+        SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved_incidents,
+        SUM(CASE WHEN priority_level = 'high' OR priority_level = 'critical' THEN 1 ELSE 0 END) as high_priority_incidents
+      FROM incident_reports
+      ${whereClause}
+      GROUP BY ${groupBy}
+      ORDER BY ${groupBy} ASC
+    `;
     
     console.log(`Executing query: ${query}`);
-    console.log(`Query params:`, finalQueryParams);
-    const [trendsData] = finalQueryParams.length > 0 
-      ? await pool.execute(query, finalQueryParams)
+    console.log(`Query params:`, queryParams);
+    const [trendsData] = queryParams.length > 0 
+      ? await pool.execute(query, queryParams)
       : await pool.execute(query);
     console.log(`Raw trends data for ${period}:`, trendsData);
-    console.log(`Total data points returned: ${trendsData.length}`);
 
     // Format the response data with better period labels
     const formattedData = trendsData.map(row => {
@@ -957,34 +820,12 @@ router.get('/monthly-trends', async (req, res) => {
     
     console.log(`Formatted data for ${period}:`, formattedData);
 
-    // Add helpful info about the data
-    let dataInfo = '';
-    let expectedDays = null;
-    let allDaysGenerated = false;
-    
-    if (monthNumForDays && monthNumForDays > 0 && yearNumForDays && isAllDays) {
-      const daysInMonth = new Date(yearNumForDays, monthNumForDays, 0).getDate();
-      expectedDays = daysInMonth;
-      allDaysGenerated = formattedData.length === daysInMonth;
-      dataInfo = `Showing all ${daysInMonth} days in ${new Date(yearNumForDays, monthNumForDays - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}. Total data points: ${formattedData.length}`;
-      if (!allDaysGenerated) {
-        dataInfo += ` ⚠ Expected ${daysInMonth} but got ${formattedData.length}`;
-      }
-    } else if (monthNumForDays && monthNumForDays > 0 && yearNumForDays && dayNumForDays && dayNumForDays > 0) {
-      dataInfo = `Showing specific day ${dayNumForDays} in ${new Date(yearNumForDays, monthNumForDays - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}.`;
-    } else {
-      dataInfo = `Incident trends for the last ${limit} ${period}. Data grouped by ${period === 'days' ? 'days' : period === 'weeks' ? 'weeks' : 'months'}. Total data points: ${formattedData.length}`;
-    }
-    
     res.json({
       success: true,
       trendsData: formattedData,
       period: period,
       limit: parseInt(limit),
-      totalDataPoints: formattedData.length,
-      expectedDays: expectedDays,
-      allDaysGenerated: allDaysGenerated,
-      note: dataInfo
+      note: `Incident trends for the last ${limit} ${period}. Data grouped by ${period === 'days' ? 'days' : period === 'weeks' ? 'weeks' : 'months'}.`
     });
 
   } catch (error) {
