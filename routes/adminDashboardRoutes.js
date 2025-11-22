@@ -745,10 +745,10 @@ router.get('/monthly-trends', async (req, res) => {
         
         console.log(`Date filter - WHERE: ${whereClause}, Params:`, queryParams);
         
-        // Use explicit DATE() function to ensure we get one row per day
+        // Use explicit DATE() function and format as string to ensure we get one row per day
         query = `
           SELECT
-            DATE(date_reported) as period,
+            DATE_FORMAT(DATE(date_reported), '%Y-%m-%d') as period,
             COUNT(*) as total_incidents,
             SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved_incidents,
             SUM(CASE WHEN priority_level = 'high' OR priority_level = 'critical' THEN 1 ELSE 0 END) as high_priority_incidents
@@ -768,9 +768,10 @@ router.get('/monthly-trends', async (req, res) => {
           console.log(`Sample data (first 5 rows):`, trendsData.slice(0, 5));
           // Verify the grouping is by day (should be YYYY-MM-DD format)
           const firstPeriod = trendsData[0]?.period;
-          console.log(`First period value: "${firstPeriod}" (should be in YYYY-MM-DD format for daily grouping)`);
-          if (firstPeriod && !firstPeriod.match(/^\d{4}-\d{2}-\d{2}$/)) {
-            console.warn(`⚠️ WARNING: Period format "${firstPeriod}" doesn't match daily format (YYYY-MM-DD). Grouping might be incorrect!`);
+          const firstPeriodStr = firstPeriod ? String(firstPeriod) : '';
+          console.log(`First period value: "${firstPeriodStr}" (type: ${typeof firstPeriod}, should be in YYYY-MM-DD format for daily grouping)`);
+          if (firstPeriodStr && typeof firstPeriodStr === 'string' && !firstPeriodStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
+            console.warn(`⚠️ WARNING: Period format "${firstPeriodStr}" doesn't match daily format (YYYY-MM-DD). Grouping might be incorrect!`);
           }
           // Log all unique periods to verify we have multiple days
           const uniquePeriods = [...new Set(trendsData.map(r => r.period))];
