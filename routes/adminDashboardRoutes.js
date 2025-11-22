@@ -662,6 +662,7 @@ router.get('/monthly-trends', async (req, res) => {
 
     const { period = 'months', limit = 12, year, month, day } = req.query;
     console.log(`Monthly trends request - Period: ${period}, Limit: ${limit}, Year: ${year}, Month: ${month}, Day: ${day}`);
+    console.log(`Month type: ${typeof month}, Month parsed: ${month ? parseInt(month) : 'null'}`);
     let dateFormat, groupBy, dateFilter;
     let whereClause = '';
 
@@ -732,46 +733,47 @@ router.get('/monthly-trends', async (req, res) => {
     }
 
     // Check if we need to generate all days in a month (when month is selected)
-    const monthNum = month && parseInt(month) > 0 ? parseInt(month) : null;
-    const yearNum = year ? parseInt(year) : null;
+    // Parse month and year for date generation
+    const monthNumForDays = month ? parseInt(month) : null;
+    const yearNumForDays = year ? parseInt(year) : null;
     
     let query;
     let finalQueryParams = [];
     
-    if (monthNum && monthNum > 0 && yearNum) {
+    // If month is selected (valid month 1-12), generate all days in that month
+    if (monthNumForDays && monthNumForDays > 0 && monthNumForDays <= 12 && yearNumForDays && !isNaN(monthNumForDays) && !isNaN(yearNumForDays)) {
+      console.log(`✓ Month detected! Generating all days for month ${monthNumForDays}, year ${yearNumForDays}`);
       // Generate all days in the selected month and LEFT JOIN with incidents
       // This ensures all days (1-30/31) appear in the chart, even with 0 incidents
-      const daysInMonth = new Date(yearNum, monthNum, 0).getDate(); // Get last day of month
+      const daysInMonth = new Date(yearNumForDays, monthNumForDays, 0).getDate(); // Get last day of month
+      console.log(`Days in month: ${daysInMonth}`);
       
-      // Use a numbers table approach (works with all MySQL versions)
-      // Generate dates from 1 to daysInMonth
-      let dateUnionParts = [];
+      // Build date series using a simpler approach with a temporary table or subquery
+      // Generate dates from 1 to daysInMonth using a numbers table approach
+      let dateSelects = [];
       for (let day = 1; day <= daysInMonth; day++) {
-        dateUnionParts.push(`SELECT DATE(CONCAT(?, '-', LPAD(?, 2, '0'), '-', LPAD(?, 2, '0'))) as period_date`);
+        const monthStr = monthNumForDays.toString().padStart(2, '0');
+        const dayStr = day.toString().padStart(2, '0');
+        dateSelects.push(`SELECT '${yearNumForDays}-${monthStr}-${dayStr}' as period_date`);
       }
       
       query = `
         SELECT
-          DATE_FORMAT(ds.period_date, '%Y-%m-%d') as period,
+          ds.period_date as period,
           COALESCE(COUNT(ir.incident_id), 0) as total_incidents,
           COALESCE(SUM(CASE WHEN ir.status = 'resolved' THEN 1 ELSE 0 END), 0) as resolved_incidents,
           COALESCE(SUM(CASE WHEN ir.priority_level = 'high' OR ir.priority_level = 'critical' THEN 1 ELSE 0 END), 0) as high_priority_incidents
         FROM (
-          ${dateUnionParts.join(' UNION ALL ')}
+          ${dateSelects.join(' UNION ALL ')}
         ) ds
-        LEFT JOIN incident_reports ir ON DATE(ir.date_reported) = ds.period_date
-          AND YEAR(ir.date_reported) = ? AND MONTH(ir.date_reported) = ?
+        LEFT JOIN incident_reports ir ON DATE(ir.date_reported) = DATE(ds.period_date)
         GROUP BY ds.period_date
         ORDER BY ds.period_date ASC
       `;
-      // Parameters: year, month, day (repeated for each day), then year and month for the JOIN
-      finalQueryParams = [];
-      for (let day = 1; day <= daysInMonth; day++) {
-        finalQueryParams.push(yearNum, monthNum, day);
-      }
-      finalQueryParams.push(yearNum, monthNum);
+      finalQueryParams = []; // No parameters needed since we're using string interpolation for dates
     } else {
       // Regular query for other cases (year only, or no date filter)
+      console.log(`Using regular query - groupBy: ${groupBy}, whereClause: ${whereClause}`);
       query = `
         SELECT
           ${groupBy} as period,
